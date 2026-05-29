@@ -1,317 +1,294 @@
-import { createClient } from "@/lib/supabase-server";
-import { redirect } from "next/navigation";
-import { calculateGPA, calculateCGPA } from "@/lib/gradingEngine";
-import CGPAChart from "@/components/CGPAChart";
+"use client";
 
-export default async function StudentDashboard() {
-  const supabase = await createClient();
-  
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
-  
-  const { data: userData } = await supabase.from('users').select('role').eq('id', user.id).single();
-  if (userData?.role !== 'student') redirect('/login?error=unauthorized');
+import { useState, useEffect } from "react";
+import { createBrowserClient } from "@supabase/ssr";
+import { Loader2, AlertTriangle, Lock, Download } from "lucide-react";
+import { calculateGrade } from "@/lib/gradingEngine";
 
-  const { data: studentProfile } = await supabase
-    .from('students')
-    .select('*')
-    .eq('profile_id', user.id)
-    .single();
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
-  const { data: resultsData, error } = await supabase
-    .from('results')
-    .select(`
-      *,
-      courses!inner ( id, course_code, title, credit_units )
-    `)
-    .eq('student_id', user.id)
-    .order('academic_year', { ascending: true })
-    .order('semester', { ascending: true });
+interface CourseResult {
+  course_code: string;
+  title: string;
+  credit_units: number;
+  ca_score: number | null;
+  exam_score: number | null;
+  total_score: number | null;
+  letter_grade: string | null;
+  grade_point: number | null;
+  status: string;
+}
 
-  if (error) {
-    return <div className="p-8 text-rose-600 bg-rose-50 m-8 rounded-lg font-medium">Failed to load academic records.</div>;
-  }
+export default function StudentLedger() {
+  const [userId, setUserId] = useState("");
+  const [dept, setDept] = useState("");
+  const [level, setLevel] = useState("500L");
+  const [semester, setSemester] = useState("Harmattan");
+  const [session, setSession] = useState("2024/2025");
+  const [results, setResults] = useState<CourseResult[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [studentName, setStudentName] = useState("");
 
-  const sessionsMap = new Map();
-  const allCourseResults: { creditUnits: number; totalScore: number }[] = [];
-  
-  let totalCreditsRegistered = 0;
+  useEffect(() => {
+    const init = async () => {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      if (!s?.user) return;
+      setUserId(s.user.id);
 
-  resultsData?.forEach(row => {
-    const course = Array.isArray(row.courses) ? row.courses[0] : row.courses;
-    if (!course) return;
+      const { data: student } = await supabase
+        .from("students")
+        .select("full_name, department, current_level")
+        .eq("profile_id", s.user.id)
+        .single();
 
-    totalCreditsRegistered += course.credit_units;
-    
-    const year = row.academic_year;
-    if (!sessionsMap.has(year)) {
-      sessionsMap.set(year, {
-        academic_year: year,
-        semesters: {
-          Harmattan: { courses: [], courseResultsForGPA: [], gpa: 0, cgpa: 0 },
-          Rain: { courses: [], courseResultsForGPA: [], gpa: 0, cgpa: 0 }
-        }
-      });
-    }
-
-    const session = sessionsMap.get(year);
-    const sem = session.semesters[row.semester as 'Harmattan' | 'Rain'];
-    
-    sem.courses.push({
-      ...row,
-      course_code: course.course_code,
-      title: course.title,
-      credit_units: course.credit_units
-    });
-    
-    const resultItem = {
-      creditUnits: course.credit_units,
-      totalScore: row.total_score
+      if (student) {
+        setStudentName(student.full_name);
+        setDept(student.department);
+        setLevel(`${student.current_level}L`);
+      }
     };
-    sem.courseResultsForGPA.push(resultItem);
-    allCourseResults.push(resultItem);
-  });
+    init();
+  }, []);
 
-  const currentCGPA = calculateCGPA(allCourseResults);
-  const academicStanding = currentCGPA >= 1.5 ? "Good Standing" : "Academic Warning";
+  useEffect(() => {
+    if (!userId || !dept) return;
+    const fetch = async () => {
+      setIsLoading(true);
+      const lvlNum = parseInt(level.replace("L", ""));
 
-  const sessionArray = Array.from(sessionsMap.values());
-  const chartData: { name: string; gpa: number; cgpa: number }[] = [];
-  const runningResults: { creditUnits: number; totalScore: number }[] = [];
+      // 1. Get courses matching params
+      const { data: courses } = await supabase
+        .from("courses")
+        .select("id, course_code, title, credit_units")
+        .eq("department", dept)
+        .eq("level", lvlNum)
+        .eq("semester", semester);
 
-  for (const session of sessionArray) {
-    for (const semKey of ['Harmattan', 'Rain'] as const) {
-      const sem = session.semesters[semKey];
-      if (sem.courses.length === 0) continue;
+      if (!courses || courses.length === 0) {
+        setResults([]);
+        setIsLoading(false);
+        return;
+      }
 
-      runningResults.push(...sem.courseResultsForGPA);
-      const semGPA = calculateGPA(sem.courseResultsForGPA);
-      const runCGPA = calculateCGPA(runningResults);
-      
-      chartData.push({
-        name: `${session.academic_year} ${semKey.charAt(0)}`,
-        gpa: semGPA,
-        cgpa: runCGPA
+      // 2. Get student results for these courses
+      const courseIds = courses.map((c) => c.id);
+      const { data: studentResults } = await supabase
+        .from("results")
+        .select("*")
+        .eq("student_id", userId)
+        .eq("academic_year", session)
+        .in("course_id", courseIds);
+
+      const merged: CourseResult[] = courses.map((course) => {
+        const r = studentResults?.find((res) => res.course_id === course.id);
+        return {
+          course_code: course.course_code,
+          title: course.title,
+          credit_units: course.credit_units,
+          ca_score: r?.ca_score ?? null,
+          exam_score: r?.exam_score ?? null,
+          total_score: r?.total_score ?? null,
+          letter_grade: r?.letter_grade ?? null,
+          grade_point: r?.grade_point ?? null,
+          status: r?.status ?? "draft",
+        };
       });
-      
-      sem.gpa = semGPA;
-      sem.cgpa = runCGPA;
-    }
-  }
 
-  sessionArray.reverse();
+      setResults(merged);
+      setIsLoading(false);
+    };
+    fetch();
+  }, [userId, dept, level, semester, session]);
 
-  const getBadgeStyles = (grade: string) => {
-    if (grade === 'A' || grade === 'B') return "bg-[#e6f2eb] text-[#0d5c2e] border border-[#0d5c2e]/20";
-    if (grade === 'C' || grade === 'D') return "bg-amber-100 text-amber-800 border border-amber-200";
-    return "bg-rose-100 text-rose-800 border border-rose-200";
+  // Privacy gate: if ANY result in the set is not released, hide everything
+  const hasUnreleased = results.some((r) => r.status !== "released");
+  const hasAnyResult = results.some((r) => r.ca_score !== null);
+
+  // Compute GPA
+  const gradedCourses = results.filter((r) => r.total_score !== null && r.grade_point !== null);
+  const gpa = gradedCourses.length > 0
+    ? (
+        gradedCourses.reduce((acc, r) => acc + (r.grade_point! * r.credit_units), 0) /
+        gradedCourses.reduce((acc, r) => acc + r.credit_units, 0)
+      ).toFixed(2)
+    : null;
+
+  const gradeBadgeClass = (grade: string | null) => {
+    if (!grade) return "bg-[#1E293B] text-[#475569] border-[#1E293B]";
+    if (grade === "A") return "bg-emerald-500/20 text-emerald-400 border-emerald-500/20";
+    if (grade === "B") return "bg-sky-500/20 text-sky-400 border-sky-500/20";
+    if (grade === "C") return "bg-amber-500/20 text-amber-400 border-amber-500/20";
+    if (grade === "D") return "bg-orange-500/20 text-orange-400 border-orange-500/20";
+    return "bg-rose-500/20 text-rose-400 border-rose-500/20";
   };
 
-  const MAX_CREDITS = 120; // Example graduation milestone
-  const creditPercentage = Math.min((totalCreditsRegistered / MAX_CREDITS) * 100, 100);
+  const handleExport = () => {
+    if (hasUnreleased || !hasAnyResult) return;
+    const headers = ["Course Code", "Title", "CA", "Exam", "Total", "Grade", "GPA"];
+    const csvRows = results.map((r) =>
+      [r.course_code, `"${r.title}"`, r.ca_score ?? "", r.exam_score ?? "", r.total_score ?? "", r.letter_grade ?? "", r.grade_point ?? ""].join(",")
+    );
+    const csv = [headers.join(","), ...csvRows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${dept}_${level}_${session}_my_results.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const SelectInput = ({ value, onChange, children }: any) => (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="bg-[#0F1524] border border-[#1E293B] text-[12px] font-semibold text-[#F8FAFC] rounded-lg px-3 py-2 outline-none focus:border-emerald-500/50 transition-all appearance-none cursor-pointer"
+    >
+      {children}
+    </select>
+  );
 
   return (
-    <div className="min-h-screen p-8 bg-[#f8fafc]">
-      <div className="max-w-[1200px] mx-auto space-y-10">
-        <header>
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">Welcome, {studentProfile?.full_name || 'Student'}</h1>
-          <div className="flex items-center space-x-4 mt-3">
-            <span className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-wider text-slate-500">
-              Reg No: <span className="text-slate-900">{studentProfile?.reg_number}</span>
-            </span>
-            <span className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-wider text-slate-500">
-              Level: <span className="text-slate-900">{studentProfile?.current_level}</span>
-            </span>
-          </div>
-        </header>
+    <div className="flex flex-col h-screen bg-[#070A12] overflow-hidden">
 
-        {/* Bento Grid Summary Metrics */}
-        <div className="grid md:grid-cols-3 gap-6">
-          {/* Panel 1: CGPA */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 flex flex-col justify-between h-[200px]">
-            <div>
-              <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Current CGPA</h2>
-              <div className="flex items-end space-x-3">
-                <p className="text-5xl font-black tracking-tight text-[#0d5c2e]">{currentCGPA.toFixed(2)}</p>
-                {currentCGPA >= 3.50 && (
-                  <span className="mb-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest bg-[#e6f2eb] text-[#0d5c2e] border border-[#0d5c2e]/20">
-                    High Honor
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="pt-4 border-t border-slate-100">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Class: <span className="text-slate-700">{
-                currentCGPA >= 4.5 ? "First Class" :
-                currentCGPA >= 3.5 ? "Second Class Upper" :
-                currentCGPA >= 2.4 ? "Second Class Lower" :
-                currentCGPA >= 1.5 ? "Third Class" : "Fail"
-              }</span></p>
-            </div>
-          </div>
-          
-          {/* Panel 2: Credit Accumulation */}
-          <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between h-[200px]">
-            <div>
-              <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Credit Accumulation</h2>
-              <p className="text-5xl font-black tracking-tight text-slate-900">
-                {totalCreditsRegistered} <span className="text-2xl text-slate-400 font-bold">/ {MAX_CREDITS}</span>
-              </p>
-            </div>
-            <div>
-              <div className="w-full bg-slate-100 rounded-full h-2 mb-2 overflow-hidden border border-slate-200">
-                <div className="bg-[#0d5c2e] h-2 rounded-full transition-all duration-1000" style={{ width: `${creditPercentage}%` }}></div>
-              </div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 text-right">{creditPercentage.toFixed(1)}% of Milestone</p>
-            </div>
-          </div>
-
-          {/* Panel 3: Academic Standing */}
-          <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between h-[200px]">
-            <div>
-              <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Academic Standing</h2>
-              <p className={`text-3xl font-black tracking-tight mt-2 ${currentCGPA >= 1.5 ? 'text-[#0d5c2e]' : 'text-rose-600'}`}>
-                {academicStanding}
-              </p>
-            </div>
-            <div className="pt-4 border-t border-slate-100">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">NUC 5.0 Evaluation standard</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Main Content Area */}
-        <div className="grid lg:grid-cols-3 gap-8 items-start">
-          
-          {/* Timeline Section (Left 2 columns) */}
-          <div className="lg:col-span-2 space-y-8">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">Academic Trajectory Matrix</h2>
-            
-            {sessionArray.length === 0 ? (
-              <div className="bg-white rounded-xl p-12 text-center border border-slate-200 shadow-sm">
-                <p className="text-sm font-bold uppercase tracking-wider text-slate-400">No computational records instantiated.</p>
-              </div>
-            ) : (
-              <div className="space-y-8">
-                {sessionArray.map((session) => (
-                  <div key={session.academic_year} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden group hover:border-slate-300 transition-colors">
-                    <div className="bg-slate-50 px-8 py-5 border-b border-slate-200">
-                      <h3 className="text-lg font-black text-slate-900">{session.academic_year} Academic Session</h3>
-                    </div>
-                    
-                    <div className="p-8 space-y-10">
-                      {(['Harmattan', 'Rain'] as const).map((semKey) => {
-                        const sem = session.semesters[semKey];
-                        if (sem.courses.length === 0) return null;
-                        
-                        return (
-                          <div key={semKey}>
-                            <div className="flex flex-wrap justify-between items-end mb-4 border-b border-slate-100 pb-3">
-                              <h4 className="text-slate-600 font-bold uppercase tracking-wider text-xs">{semKey} Semester Results</h4>
-                              <div className="flex space-x-6">
-                                <div className="text-right">
-                                  <p className="text-[10px] uppercase tracking-widest font-bold text-slate-500">Semester GPA</p>
-                                  <p className="font-black text-slate-900 text-lg">{sem.gpa.toFixed(2)}</p>
-                                </div>
-                                <div className="text-right border-l border-slate-200 pl-6">
-                                  <p className="text-[10px] uppercase tracking-widest font-bold text-[#0d5c2e]">Running CGPA</p>
-                                  <p className="font-black text-[#0d5c2e] text-lg">{sem.cgpa.toFixed(2)}</p>
-    <div className="flex flex-col h-[calc(100vh-64px)] md:h-screen bg-slate-50 overflow-hidden">
-      
-      {/* Section 1: Parameter Controls (25%) */}
-      <div className="h-[25%] bg-white border-b border-slate-200 p-6 flex flex-col justify-between shrink-0">
+      {/* ── SECTION 1: Parameters (25%) ── */}
+      <div className="shrink-0 h-auto md:h-[25%] bg-[#0A0F1C] border-b border-[#1E293B] px-5 py-4 flex flex-col justify-between gap-4">
         <div>
-          <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Academic Ledger</h2>
-          <div className="mt-2 text-sm font-semibold text-slate-700">
-            <span className="font-bold text-[#0d5c2e]">{studentInfo.name}</span> &mdash; <span className="font-mono text-slate-500">{studentInfo.reg_number}</span>
-          </div>
+          <h2 className="text-[15px] font-black text-[#F8FAFC] tracking-tight">
+            My Academic Ledger
+          </h2>
+          {studentName && (
+            <p className="text-[12px] text-[#64748B] font-medium mt-0.5">{studentName}</p>
+          )}
         </div>
-        
-        <div className="flex flex-wrap items-center gap-4 mt-4">
-          <select value={level} onChange={e => setLevel(e.target.value)} className="bg-slate-50 border border-slate-200 text-sm font-semibold rounded-lg px-3 py-2 text-slate-700 outline-none focus:border-[#0d5c2e]">
-            <option value="100L">100L</option>
-            <option value="200L">200L</option>
-            <option value="300L">300L</option>
-            <option value="400L">400L</option>
-            <option value="500L">500L</option>
-          </select>
-          
-          <select value={semester} onChange={e => setSemester(e.target.value)} className="bg-slate-50 border border-slate-200 text-sm font-semibold rounded-lg px-3 py-2 text-slate-700 outline-none focus:border-[#0d5c2e]">
+
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
+          <SelectInput value={level} onChange={setLevel}>
+            {["100L", "200L", "300L", "400L", "500L"].map((l) => (
+              <option key={l} value={l}>{l}</option>
+            ))}
+          </SelectInput>
+
+          <SelectInput value={dept} onChange={setDept}>
+            {["IFT", "CSC", "CYB", "SOE"].map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </SelectInput>
+
+          <SelectInput value={semester} onChange={setSemester}>
             <option value="Harmattan">Harmattan</option>
             <option value="Rain">Rain</option>
-          </select>
-          
-          <select value={session} onChange={e => setSession(e.target.value)} className="bg-slate-50 border border-slate-200 text-sm font-semibold rounded-lg px-3 py-2 text-slate-700 outline-none focus:border-[#0d5c2e]">
+          </SelectInput>
+
+          <SelectInput value={session} onChange={setSession}>
             <option value="2023/2024">2023/2024</option>
             <option value="2024/2025">2024/2025</option>
             <option value="2025/2026">2025/2026</option>
-          </select>
+          </SelectInput>
         </div>
       </div>
 
-      {/* Section 2: Spreadsheet Data Grid or Privacy Gate (60%) */}
-      <div className="h-[60%] overflow-auto bg-slate-50 border-b border-slate-200 print:h-auto relative">
-        
-        {!isReleased ? (
-          // Privacy Gate Placeholder
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center bg-white">
-            <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mb-6">
-              <Lock className="w-10 h-10 text-slate-400" />
+      {/* ── SECTION 2: Data Grid (60%) ── */}
+      <div className="flex-1 overflow-auto relative" style={{ maxHeight: "60vh" }}>
+        {isLoading ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="flex items-center gap-3 text-[13px] font-bold text-[#64748B]">
+              <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />
+              <span>Loading your results...</span>
             </div>
-            <h3 className="text-2xl font-black text-slate-900 tracking-tight mb-2">Results Not Available Yet</h3>
-            <p className="text-slate-500 font-medium max-w-md leading-relaxed">
-              This ledger is awaiting examination board release verification. Complete grades for this parameter block have not been officially published.
+          </div>
+        ) : results.length === 0 ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
+            <div className="w-16 h-16 bg-[#0F1524] border border-[#1E293B] rounded-2xl flex items-center justify-center mb-4">
+              <AlertTriangle className="w-7 h-7 text-[#334155]" />
+            </div>
+            <p className="text-[13px] font-medium text-[#475569] max-w-sm leading-relaxed">
+              No courses found for the selected parameters.
+            </p>
+          </div>
+        ) : hasUnreleased || !hasAnyResult ? (
+          // Privacy Gate
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
+            <div className="w-20 h-20 bg-[#0F1524] border border-[#1E293B] rounded-2xl flex items-center justify-center mb-5">
+              <Lock className="w-9 h-9 text-[#334155]" />
+            </div>
+            <h3 className="text-[15px] font-black text-[#F8FAFC] mb-2">
+              Results Not Available Yet
+            </h3>
+            <p className="text-[13px] font-medium text-[#475569] max-w-md leading-relaxed">
+              This ledger is awaiting examination board release verification. Check back later.
             </p>
           </div>
         ) : (
-          // Authorized Grade Sheet
-          <table className="w-full text-left border-collapse min-w-[800px]">
-            <thead className="sticky top-0 bg-white shadow-sm z-10">
-              <tr>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200">Courses</th>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200 w-24">CA</th>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200 w-24">Exam</th>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200">Total</th>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200">Grade</th>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200">Grade Point</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 bg-white">
-              {mockCourses.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-6 py-4 text-sm font-bold text-slate-900">{row.course}</td>
-                  <td className="px-6 py-4 text-sm font-semibold text-slate-700">{row.ca}</td>
-                  <td className="px-6 py-4 text-sm font-semibold text-slate-700">{row.exam}</td>
-                  <td className="px-6 py-4 text-sm font-black text-slate-900">{row.total}</td>
-                  <td className="px-6 py-4">
-                    <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg text-sm font-black ${
-                      row.grade === 'A' || row.grade === 'B' ? 'bg-[#e6f2eb] text-[#0d5c2e]' : 
-                      row.grade === 'F' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-700'
-                    }`}>
-                      {row.grade}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-sm font-bold text-slate-600">{row.grade_point?.toFixed(2)}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[600px]">
+              <thead className="sticky top-0 z-10 bg-[#0A0F1C] border-b border-[#1E293B]">
+                <tr>
+                  <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569]">Course</th>
+                  <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569] hidden md:table-cell">Title</th>
+                  <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569] w-16">CA</th>
+                  <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569] w-16">Exam</th>
+                  <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569]">Total</th>
+                  <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569]">Grade</th>
+                  <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569]">GPA</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-[#0F1524]">
+                {results.map((r, i) => (
+                  <tr key={i} className="hover:bg-[#0F1524]/60 transition-colors">
+                    <td className="px-3 py-2 text-[12px] font-black font-mono text-[#F8FAFC]">{r.course_code}</td>
+                    <td className="px-3 py-2 text-[12px] text-[#64748B] hidden md:table-cell truncate max-w-[200px]">{r.title}</td>
+                    <td className="px-3 py-2 text-[12px] font-mono text-[#94A3B8]">{r.ca_score ?? "—"}</td>
+                    <td className="px-3 py-2 text-[12px] font-mono text-[#94A3B8]">{r.exam_score ?? "—"}</td>
+                    <td className="px-3 py-2 text-[12px] font-black font-mono text-[#F8FAFC]">{r.total_score ?? "—"}</td>
+                    <td className="px-3 py-2">
+                      <span className={`inline-flex items-center justify-center w-7 h-7 rounded-lg text-[11px] font-black border ${gradeBadgeClass(r.letter_grade)}`}>
+                        {r.letter_grade ?? "—"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-[12px] font-mono font-bold text-[#64748B]">{r.grade_point ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {gpa && (
+                <tfoot>
+                  <tr className="bg-[#0A0F1C] border-t border-[#1E293B]">
+                    <td colSpan={5} className="px-3 py-3 text-[11px] font-black uppercase tracking-widest text-[#475569]">
+                      Semester GPA
+                    </td>
+                    <td colSpan={2} className="px-3 py-3 text-[16px] font-black text-emerald-400">
+                      {gpa}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
         )}
-
       </div>
 
-      {/* Section 3: Action Toolbar (15%) */}
-      <div className="h-[15%] bg-white border-t border-slate-200 p-6 flex items-center justify-start shrink-0 print:hidden">
-        <button 
-          onClick={handlePrint} 
-          disabled={!isReleased}
-          className="flex items-center space-x-2 px-6 py-3 bg-[#f0f9f4] text-[#0d5c2e] font-bold text-sm rounded-lg hover:bg-[#e6f2eb] border border-[#0d5c2e]/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      {/* ── SECTION 3: Footer (15%) ── */}
+      <div className="shrink-0 h-auto md:h-[15%] bg-[#0A0F1C] border-t border-[#1E293B] px-5 py-4 flex items-center justify-between gap-3">
+        <button
+          onClick={() => window.print()}
+          className="flex items-center gap-2 px-4 py-2.5 bg-[#0F1524] border border-[#1E293B] hover:border-[#334155] text-[12px] font-bold text-[#94A3B8] hover:text-[#F8FAFC] rounded-xl transition-all no-print"
         >
-          <Printer className="w-5 h-5" />
-          <span>Print Official Ledger</span>
+          <Download className="w-4 h-4" />
+          <span>Print / Save PDF</span>
+        </button>
+
+        <button
+          onClick={handleExport}
+          disabled={hasUnreleased || !hasAnyResult}
+          className="flex items-center gap-2 px-4 py-2.5 bg-[#0F1524] border border-[#1E293B] hover:border-[#334155] text-[12px] font-bold text-[#94A3B8] hover:text-[#F8FAFC] rounded-xl transition-all disabled:opacity-30 disabled:cursor-not-allowed no-print"
+        >
+          <Download className="w-4 h-4" />
+          <span>Export .csv</span>
         </button>
       </div>
-
     </div>
   );
 }

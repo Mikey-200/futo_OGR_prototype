@@ -2,17 +2,23 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
-import { Shield, BookOpen, AlertCircle, Loader2, UserCircle2 } from "lucide-react";
-import { UserRole } from "@/types";
+import { createBrowserClient } from "@supabase/ssr";
+import { Terminal, Shield, Loader2, AlertCircle, Eye, EyeOff } from "lucide-react";
+import type { UserRole } from "@/types";
 
-export default function LandingGateway() {
+export default function LoginPage() {
   const [role, setRole] = useState<UserRole>("student");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,32 +32,24 @@ export default function LandingGateway() {
       });
 
       if (authError) throw new Error(authError.message);
-      if (!authData.user) throw new Error("Authentication failed: No user returned");
+      if (!authData.user) throw new Error("Authentication failed. No user returned.");
 
       const { data: userData, error: userError } = await supabase
         .from("users")
-        .select("role")
+        .select("role, department")
         .eq("id", authData.user.id)
         .single();
 
-      if (userError) throw new Error("Failed to retrieve user role.");
-      if (!userData) throw new Error("User record not found in system.");
-
-      if (userData.role !== role) {
-        // Warning log, but proceed anyway for robust flow, or block it. 
-        // We will strictly enforce routing based on the DB role, not the selected dropdown, 
-        // but the dropdown is for UI context.
-      }
+      if (userError || !userData) throw new Error("Failed to retrieve user profile.");
 
       router.refresh();
 
-      // Route based strictly on DB verified role
       switch (userData.role) {
         case "dean":
-          router.push("/results?dept=IFT");
+          router.push("/admin");
           break;
         case "hod":
-          router.push("/results?dept=IFT"); // Or dynamic based on department
+          router.push(`/results?dept=${userData.department || "IFT"}`);
           break;
         case "lecturer":
           router.push("/results");
@@ -60,7 +58,7 @@ export default function LandingGateway() {
           router.push("/student");
           break;
         default:
-          throw new Error("Invalid user role assigned.");
+          throw new Error("Unknown access role. Contact your administrator.");
       }
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred.");
@@ -69,147 +67,186 @@ export default function LandingGateway() {
     }
   };
 
-  const getPlaceholder = () => {
-    switch(role) {
-      case "dean": return "dean.sict@futo.edu.ng";
-      case "hod": return "hod.ift@futo.edu.ng";
-      case "lecturer": return "lecturer.name@futo.edu.ng";
-      case "student": return "20201234567@futo.edu.ng";
-    }
+  const placeholders: Record<UserRole, string> = {
+    dean: "dean.sict@futo.edu.ng",
+    hod: "hod.ift@futo.edu.ng",
+    lecturer: "lecturer.name@futo.edu.ng",
+    student: "20201234567@futo.edu.ng",
   };
 
+  const roleOptions = [
+    { value: "student", label: "Student — Ledger Access" },
+    { value: "lecturer", label: "Lecturer / Faculty" },
+    { value: "hod", label: "Head of Department (HOD)" },
+    { value: "dean", label: "Dean of School" },
+  ];
+
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-white">
-      {/* Branding Panel (Left Side) */}
-      <div className="hidden md:flex flex-col justify-between w-1/2 bg-[#0d5c2e] p-12 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-10">
-          <svg className="h-full w-full" xmlns="http://www.w3.org/2000/svg">
+    <div className="min-h-screen flex bg-[#070A12]">
+      {/* Left Branding Panel */}
+      <div className="hidden lg:flex flex-col justify-between w-[45%] bg-[#0A0F1C] border-r border-[#1E293B] p-12 relative overflow-hidden">
+        {/* Grid background pattern */}
+        <div className="absolute inset-0 opacity-5 pointer-events-none">
+          <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
             <defs>
-              <pattern id="grid-pattern" width="40" height="40" patternUnits="userSpaceOnUse">
-                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="1"/>
+              <pattern id="hud-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#10B981" strokeWidth="0.5" />
               </pattern>
             </defs>
-            <rect width="100%" height="100%" fill="url(#grid-pattern)" />
+            <rect width="100%" height="100%" fill="url(#hud-grid)" />
           </svg>
         </div>
-        
+
+        {/* Glow orb */}
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+
         <div className="relative z-10">
-          <div className="flex items-center space-x-3 mb-16">
-            <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center">
-              <BookOpen className="text-[#0d5c2e] w-6 h-6" />
+          <div className="flex items-center gap-3 mb-16">
+            <div className="w-10 h-10 bg-emerald-500/20 border border-emerald-500/30 rounded-xl flex items-center justify-center">
+              <Terminal className="w-5 h-5 text-emerald-400" />
             </div>
-            <span className="text-white text-xl font-black tracking-widest uppercase">FUTO</span>
+            <div>
+              <div className="text-[11px] font-black tracking-[0.2em] text-emerald-400/70 uppercase">
+                Federal University of Technology
+              </div>
+              <div className="text-[15px] font-black tracking-widest text-[#F8FAFC] uppercase">
+                Owerri
+              </div>
+            </div>
           </div>
 
-          <h1 className="text-5xl font-black text-white leading-tight mb-6">
-            Institutional<br/>Grade Portal
+          <h1 className="text-5xl font-black text-[#F8FAFC] leading-[1.1] tracking-tight mb-5">
+            Academic<br />
+            <span className="text-emerald-400">Grade</span><br />
+            Portal
           </h1>
-          <p className="text-[#e6f2eb] text-lg font-medium max-w-md leading-relaxed">
-            A unified system for students, faculty, and administrators to seamlessly manage and track academic progression.
+          <p className="text-[#64748B] text-[15px] leading-relaxed max-w-sm font-medium">
+            A unified result tracking system for students, faculty, and administrators across SICT departments.
           </p>
         </div>
 
-        <div className="relative z-10 text-[#a3d4b6] text-sm font-semibold">
-          &copy; {new Date().getFullYear()} Federal University of Technology Owerri.
+        <div className="relative z-10">
+          <div className="flex items-center gap-2 text-[12px] font-bold text-[#334155] uppercase tracking-widest">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 glow-pulse" />
+            <span>System Online — 2025/2026 Academic Session</span>
+          </div>
         </div>
       </div>
 
-      {/* Authentication Form (Right Side) */}
-      <div className="w-full md:w-1/2 flex items-center justify-center p-8 sm:p-12 lg:p-24 bg-white relative">
-        <div className="w-full max-w-md space-y-8">
-          
-          <div className="text-center md:text-left">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-[#f0f9f4] mb-6 md:hidden">
-              <BookOpen className="w-6 h-6 text-[#0d5c2e]" />
+      {/* Right Auth Panel */}
+      <div className="flex-1 flex items-center justify-center p-8 sm:p-12">
+        <div className="w-full max-w-[400px] space-y-7">
+
+          {/* Mobile logo */}
+          <div className="lg:hidden flex items-center gap-3 mb-2">
+            <div className="w-9 h-9 bg-emerald-500/20 border border-emerald-500/30 rounded-lg flex items-center justify-center">
+              <Terminal className="w-4.5 h-4.5 text-emerald-400" />
             </div>
-            <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Secure Sign In</h2>
-            <p className="text-sm font-semibold text-slate-500 mt-2">Specify your access category and credentials.</p>
+            <span className="text-[14px] font-black tracking-widest text-[#F8FAFC] uppercase">
+              FUTO Portal
+            </span>
+          </div>
+
+          <div>
+            <h2 className="text-2xl font-black text-[#F8FAFC] tracking-tight">Secure Sign In</h2>
+            <p className="text-[13px] text-[#64748B] font-medium mt-1">
+              Specify your access category and institutional credentials.
+            </p>
           </div>
 
           {error && (
-            <div className="bg-rose-50 border border-rose-200 rounded-lg p-4 flex items-start space-x-3">
-              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-              <p className="text-sm text-rose-700 font-medium">{error}</p>
+            <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 flex items-start gap-3">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <p className="text-[13px] text-rose-300 font-medium">{error}</p>
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-6">
-            
-            {/* Role Selector Dropdown */}
+          <form onSubmit={handleLogin} className="space-y-5">
+            {/* Access Category */}
             <div className="space-y-1.5">
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600">
+              <label className="block text-[11px] font-black uppercase tracking-widest text-[#475569]">
                 Access Category
               </label>
-              <div className="relative">
-                <select
-                  value={role}
-                  onChange={(e) => setRole(e.target.value as UserRole)}
-                  className="w-full appearance-none rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 focus:border-[#0d5c2e] focus:ring-2 focus:ring-[#e6f2eb] transition outline-none cursor-pointer"
-                >
-                  <option value="student">Student Ledger Access</option>
-                  <option value="lecturer">Lecturer / Faculty</option>
-                  <option value="hod">Head of Department (HOD)</option>
-                  <option value="dean">Dean of School</option>
-                </select>
-                <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-slate-400">
-                  <UserCircle2 className="w-5 h-5" />
-                </div>
-              </div>
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value as UserRole)}
+                className="w-full bg-[#0F1524] border border-[#1E293B] text-[13px] font-semibold text-[#F8FAFC] rounded-xl px-4 py-3 outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 transition-all cursor-pointer appearance-none"
+              >
+                {roleOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value} className="bg-[#0F1524]">
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
+            {/* Email */}
             <div className="space-y-1.5">
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                Institutional Email / ID
+              <label className="block text-[11px] font-black uppercase tracking-widest text-[#475569]">
+                Institutional Email / Student ID
               </label>
-              <input 
-                type="email" 
+              <input
+                type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal focus:border-[#0d5c2e] focus:ring-2 focus:ring-[#e6f2eb] transition outline-none" 
-                placeholder={getPlaceholder()}
+                placeholder={placeholders[role]}
                 required
-              />
-            </div>
-            
-            <div className="space-y-1.5">
-              <div className="flex justify-between items-center">
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                  Password
-                </label>
-                <a href="#" className="text-[11px] font-bold text-[#0d5c2e] hover:underline">Forgot password?</a>
-              </div>
-              <input 
-                type="password" 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal focus:border-[#0d5c2e] focus:ring-2 focus:ring-[#e6f2eb] transition outline-none" 
-                placeholder="••••••••"
-                required
+                className="w-full bg-[#0F1524] border border-[#1E293B] text-[13px] font-medium text-[#F8FAFC] placeholder:text-[#334155] rounded-xl px-4 py-3 outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 transition-all"
               />
             </div>
 
-            <button 
-              type="submit" 
+            {/* Password */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <label className="block text-[11px] font-black uppercase tracking-widest text-[#475569]">
+                  Password
+                </label>
+                <a href="#" className="text-[11px] font-bold text-emerald-500/70 hover:text-emerald-400 transition-colors">
+                  Forgot password?
+                </a>
+              </div>
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full bg-[#0F1524] border border-[#1E293B] text-[13px] font-medium text-[#F8FAFC] placeholder:text-[#334155] rounded-xl px-4 py-3 pr-11 outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 transition-all"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#475569] hover:text-[#94A3B8] transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
               disabled={loading}
-              className="w-full flex justify-center items-center space-x-2 bg-[#0d5c2e] text-white rounded-lg py-3.5 font-bold hover:bg-[#0a4a25] transition disabled:opacity-70 shadow-sm mt-4"
+              className="w-full flex items-center justify-center gap-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-900 disabled:text-emerald-600 text-white font-bold text-[14px] rounded-xl py-3.5 transition-all duration-150 shadow-lg shadow-emerald-900/30 mt-2"
             >
               {loading ? (
                 <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin" />
                   <span>Authenticating...</span>
                 </>
               ) : (
                 <>
-                  <Shield className="w-5 h-5" />
+                  <Shield className="w-4 h-4" />
                   <span>Authorize Access</span>
                 </>
               )}
             </button>
           </form>
-          
-          <div className="mt-8 pt-8 border-t border-slate-100">
-            <p className="text-xs text-center font-medium text-slate-500">
-              By signing in, you agree to the <a href="#" className="text-[#0d5c2e] hover:underline">Terms of Service</a> and <a href="#" className="text-[#0d5c2e] hover:underline">Privacy Policy</a> of the university.
+
+          <div className="pt-5 border-t border-[#1E293B]">
+            <p className="text-[11px] text-center text-[#334155] font-medium">
+              © {new Date().getFullYear()} Federal University of Technology Owerri.
+              All rights reserved.
             </p>
           </div>
         </div>

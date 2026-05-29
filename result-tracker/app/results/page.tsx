@@ -1,617 +1,787 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { supabase } from "@/lib/supabase";
-import { Printer, Download, Upload, Edit3, Save, Lock, Unlock, AlertTriangle, ShieldCheck, Loader2, CheckCircle2 } from "lucide-react";
+import { createBrowserClient } from "@supabase/ssr";
+import {
+  Printer,
+  Download,
+  Upload,
+  Edit3,
+  Save,
+  Lock,
+  Unlock,
+  AlertTriangle,
+  Loader2,
+  CheckCircle2,
+  X,
+  ShieldCheck,
+} from "lucide-react";
+import UploadModal from "@/components/UploadModal";
+import { calculateGrade } from "@/lib/gradingEngine";
 
-export default function DepartmentResults() {
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+// ─── Grade computation helper returning {total, grade, point} ────────────────
+function computeGrade(ca: number, exam: number) {
+  const total = ca + exam;
+  const result = calculateGrade(total);
+  return { total, grade: result.letterGrade, point: result.gradePoint };
+}
+
+// ─── Toast Component ─────────────────────────────────────────────────────────
+function Toast({
+  type,
+  message,
+  onDismiss,
+}: {
+  type: "success" | "error" | "saving";
+  message: string;
+  onDismiss: () => void;
+}) {
+  const colors = {
+    success: "bg-emerald-500/15 border-emerald-500/30 text-emerald-300",
+    error: "bg-rose-500/15 border-rose-500/30 text-rose-300",
+    saving: "bg-indigo-500/15 border-indigo-500/30 text-indigo-300",
+  };
+  const icons = {
+    success: <CheckCircle2 className="w-4 h-4 shrink-0" />,
+    error: <AlertTriangle className="w-4 h-4 shrink-0" />,
+    saving: <Loader2 className="w-4 h-4 animate-spin shrink-0" />,
+  };
+  return (
+    <div
+      className={`fixed top-4 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-2.5 px-5 py-3 rounded-full border shadow-2xl shadow-black/40 text-[13px] font-bold max-w-[90vw] toast-enter ${colors[type]}`}
+    >
+      {icons[type]}
+      <span>{message}</span>
+      {type !== "saving" && (
+        <button onClick={onDismiss} className="ml-1 opacity-60 hover:opacity-100">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Release Modal ────────────────────────────────────────────────────────────
+function ReleaseModal({
+  onConfirm,
+  onCancel,
+  isLoading,
+}: {
+  onConfirm: (password: string) => void;
+  onCancel: () => void;
+  isLoading: boolean;
+}) {
+  const [pw, setPw] = useState("");
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className="bg-[#0F1524] border border-[#1E293B] rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="p-6 border-b border-[#1E293B]">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+              <ShieldCheck className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <h3 className="text-[15px] font-black text-[#F8FAFC]">Release Results</h3>
+              <p className="text-[12px] text-[#64748B] font-medium">
+                This action will make results visible to students.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="p-6 space-y-4">
+          <p className="text-[13px] text-[#94A3B8] leading-relaxed">
+            Confirm your account password to authorize the bulk release of this result ledger.
+            Once released, students will be able to view their scores.
+          </p>
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-black uppercase tracking-widest text-[#475569]">
+              Account Password
+            </label>
+            <input
+              type="password"
+              value={pw}
+              onChange={(e) => setPw(e.target.value)}
+              placeholder="Enter your password"
+              className="w-full bg-[#070A12] border border-[#1E293B] text-[13px] font-medium text-[#F8FAFC] placeholder:text-[#334155] rounded-xl px-4 py-3 outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20 transition-all"
+            />
+          </div>
+        </div>
+        <div className="px-6 pb-6 flex items-center gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            className="px-5 py-2.5 text-[13px] font-bold text-[#64748B] hover:text-[#94A3B8] hover:bg-[#1E293B] rounded-xl transition-all"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(pw)}
+            disabled={!pw || isLoading}
+            className="flex items-center gap-2 px-5 py-2.5 bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:bg-amber-500/30 font-bold text-[13px] rounded-xl transition-all disabled:opacity-40"
+          >
+            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlock className="w-4 h-4" />}
+            <span>Confirm Release</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+export default function ResultsMatrix() {
   const searchParams = useSearchParams();
-  const rawDept = searchParams.get('dept') || 'Unknown';
-  
-  const [userRole, setUserRole] = useState<string>("student");
-  const [userId, setUserId] = useState<string>("system");
-  const dept = userRole === 'hod' ? 'IFT' : rawDept; // Scope HOD boundary access
-  
-  // Section 1: Parameter State
-  const [level, setLevel] = useState("500L");
-  const [semester, setSemester] = useState("Harmattan");
-  const [session, setSession] = useState("2023/2024");
-  
-  // Dynamic Course State
+  const rawDept = searchParams.get("dept") || "";
+  const initCourse = searchParams.get("course") || "";
+  const initLevel = searchParams.get("level") || "500L";
+  const initSemester = searchParams.get("semester") || "Harmattan";
+
+  // Auth state
+  const [userRole, setUserRole] = useState("student");
+  const [userId, setUserId] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const [isAuthResolved, setIsAuthResolved] = useState(false);
+  const [allocatedData, setAllocatedData] = useState<any[]>([]);
+
+  const dept = userRole === "hod" && !rawDept ? "IFT" : rawDept;
+
+  // Parameters
+  const [level, setLevel] = useState(initLevel);
+  const [semester, setSemester] = useState(initSemester);
+  const [session, setSession] = useState("2024/2025");
   const [availableCourses, setAvailableCourses] = useState<any[]>([]);
-  const [courseCode, setCourseCode] = useState("");
+  const [courseCode, setCourseCode] = useState(initCourse);
   const [isLoadingCourses, setIsLoadingCourses] = useState(true);
 
-  const [isEditing, setIsEditing] = useState(false);
-  const [uploadPrompt, setUploadPrompt] = useState(false);
-  
-  // Section 2: Grid State
+  // Grid state
   const [rows, setRows] = useState<any[]>([]);
-  const [originalRows, setOriginalRows] = useState<any[]>([]); // Backup for reverting edits
+  const [originalRows, setOriginalRows] = useState<any[]>([]);
   const [isGridLoading, setIsGridLoading] = useState(false);
-  
-  // Persistence & Validation State
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
-  const [isError, setIsError] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  
-  // Section 3: Auth Modal State
-  const [authModal, setAuthModal] = useState(false);
-  const [authPassword, setAuthPassword] = useState("");
-  const [isReleased, setIsReleased] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
-  useEffect(() => {
-    // Fetch current user
-    const fetchUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        setUserId(session.user.id);
-        const { data } = await supabase.from('users').select('role').eq('id', session.user.id).single();
-        if (data) setUserRole(data.role);
-      }
-    };
-    fetchUser();
+  // Save / toast state
+  const [toast, setToast] = useState<{ type: "success" | "error" | "saving"; message: string } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Release state
+  const [isReleased, setIsReleased] = useState(false);
+  const [releaseModal, setReleaseModal] = useState(false);
+  const [isReleasing, setIsReleasing] = useState(false);
+
+  const showToast = useCallback((type: "success" | "error" | "saving", message: string, autoDismissMs = 3500) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ type, message });
+    if (type !== "saving") {
+      toastTimer.current = setTimeout(() => setToast(null), autoDismissMs);
+    }
   }, []);
 
-  // Fetch dynamic courses based on parameters
+  const dismissToast = () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(null);
+  };
+
+  // ── Auth + allocations ──
   useEffect(() => {
-    const fetchCourses = async () => {
+    const resolve = async () => {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      if (s?.user) {
+        setUserId(s.user.id);
+        setUserEmail(s.user.email || "");
+        const { data } = await supabase.from("users").select("role").eq("id", s.user.id).single();
+        const role = data?.role || "student";
+        setUserRole(role);
+        if (role === "lecturer") {
+          const { data: alloc } = await supabase
+            .from("lecturer_allocations")
+            .select("courses(*)")
+            .eq("lecturer_id", s.user.id);
+          if (alloc) setAllocatedData(alloc.map((a: any) => a.courses).filter(Boolean));
+        }
+      }
+      setIsAuthResolved(true);
+    };
+    resolve();
+  }, []);
+
+  // ── Fetch courses ──
+  useEffect(() => {
+    if (!isAuthResolved || !dept) return;
+    const fetch = async () => {
       setIsLoadingCourses(true);
-      const levelNum = parseInt(level.replace('L', ''));
-      
-      const { data, error } = await supabase
-        .from('courses')
-        .select('*')
-        .eq('department', dept)
-        .eq('level', levelNum)
-        .eq('semester', semester);
-      
-      if (!error && data && data.length > 0) {
-        setAvailableCourses(data);
-        setCourseCode(data[0].course_code);
+      const lvlNum = parseInt(level.replace("L", ""));
+
+      let courses: any[] = [];
+      if (userRole === "lecturer" && allocatedData.length > 0) {
+        courses = allocatedData.filter(
+          (c: any) => c.department === dept && c.level === lvlNum && c.semester === semester
+        );
+      } else if (userRole !== "lecturer") {
+        const { data } = await supabase
+          .from("courses")
+          .select("*")
+          .eq("department", dept)
+          .eq("level", lvlNum)
+          .eq("semester", semester);
+        if (data) courses = data;
+      }
+
+      setAvailableCourses(courses);
+      if (courses.length > 0) {
+        setCourseCode((prev) => (courses.find((c) => c.course_code === prev) ? prev : courses[0].course_code));
       } else {
-        setAvailableCourses([]);
         setCourseCode("");
       }
       setIsLoadingCourses(false);
     };
+    fetch();
+  }, [dept, level, semester, userRole, isAuthResolved, allocatedData]);
 
-    fetchCourses();
-  }, [dept, level, semester]);
-
-  const hasNoCourses = availableCourses.length === 0 && !isLoadingCourses;
-
-  // Fetch matrix rows (Students + their existing Results)
+  // ── Fetch grid rows ──
   useEffect(() => {
+    if (!courseCode || !dept || isLoadingCourses) {
+      setRows([]);
+      setOriginalRows([]);
+      return;
+    }
     const fetchMatrix = async () => {
-      if (!courseCode || hasNoCourses) {
-        setRows([]);
-        setOriginalRows([]);
-        return;
-      }
       setIsGridLoading(true);
-      
-      const levelNum = parseInt(level.replace('L', ''));
-      
-      // 1. Fetch Students
-      const { data: studentsData, error: sErr } = await supabase
-        .from('students')
-        .select('*')
-        .eq('department', dept)
-        .eq('current_level', levelNum)
-        .order('full_name', { ascending: true });
-        
-      if (sErr || !studentsData) {
-        setIsGridLoading(false);
-        return;
-      }
-      
-      // 2. Fetch Results
-      const selectedCourse = availableCourses.find(c => c.course_code === courseCode);
-      if (!selectedCourse) {
-        setIsGridLoading(false);
-        return;
-      }
+      const lvlNum = parseInt(level.replace("L", ""));
+      const selectedCourse = availableCourses.find((c) => c.course_code === courseCode);
+      if (!selectedCourse) { setIsGridLoading(false); return; }
 
-      const { data: resultsData } = await supabase
-        .from('results')
-        .select('*')
-        .eq('course_id', selectedCourse.id)
-        .eq('academic_year', session);
-        
-      // 3. Merge
-      const mergedRows = studentsData.map(student => {
-        const existingResult = resultsData?.find(r => r.student_id === student.profile_id);
+      const [{ data: students }, { data: results }] = await Promise.all([
+        supabase.from("students").select("*").eq("department", dept).eq("current_level", lvlNum).order("full_name"),
+        supabase.from("results").select("*").eq("course_id", selectedCourse.id).eq("academic_year", session),
+      ]);
+
+      if (!students) { setIsGridLoading(false); return; }
+
+      const merged = students.map((s) => {
+        const r = results?.find((res) => res.student_id === s.profile_id);
         return {
-          id: existingResult?.id || null, 
-          student_id: student.profile_id,
-          name: student.full_name,
-          reg_number: student.reg_number,
-          ca_score: existingResult?.ca_score || '', // empty string initially instead of 0 if missing
-          exam_score: existingResult?.exam_score || '',
-          total_score: existingResult?.total_score || 0,
-          letter_grade: existingResult?.letter_grade || '-',
-          grade_point: existingResult?.grade_point || 0,
-          status: existingResult?.status || 'draft'
+          id: r?.id || null,
+          student_id: s.profile_id,
+          name: s.full_name,
+          reg_number: s.reg_number,
+          ca_score: r?.ca_score ?? "",
+          exam_score: r?.exam_score ?? "",
+          total_score: r?.total_score ?? 0,
+          letter_grade: r?.letter_grade ?? "-",
+          grade_point: r?.grade_point ?? 0,
+          status: r?.status ?? "draft",
         };
       });
-      
-      setRows(mergedRows);
-      setOriginalRows(JSON.parse(JSON.stringify(mergedRows))); // Deep clone for rollback buffer
-      
-      // Check if all rows are already released
-      if (mergedRows.length > 0 && mergedRows.every(r => r.status === 'released')) {
-        setIsReleased(true);
-      } else {
-        setIsReleased(false);
-      }
-      
+
+      setRows(merged);
+      setOriginalRows(JSON.parse(JSON.stringify(merged)));
+      setIsReleased(merged.length > 0 && merged.every((r) => r.status === "released"));
       setIsGridLoading(false);
     };
-    
     fetchMatrix();
-  }, [dept, level, courseCode, session, availableCourses, hasNoCourses]);
+  }, [courseCode, dept, level, session, isLoadingCourses, availableCourses]);
 
-  const isStaff = userRole !== 'student';
-  // A row is fully graded if the total score is populated and it has a letter grade (not '-')
-  const allRowsValid = rows.length > 0 && rows.every(r => r.letter_grade !== '-');
+  const isStaff = userRole !== "student";
+  const hasNoCourses = availableCourses.length === 0 && !isLoadingCourses;
+  const allRowsGraded = rows.length > 0 && rows.every((r) => r.letter_grade !== "-");
 
-  const calculateGrade = (ca: number, exam: number) => {
-    const total = Number(ca) + Number(exam);
-    let grade = 'F';
-    let point = 0.0;
-    
-    if (total >= 70) { grade = 'A'; point = 5.0; }
-    else if (total >= 60) { grade = 'B'; point = 4.0; }
-    else if (total >= 50) { grade = 'C'; point = 3.0; }
-    else if (total >= 40) { grade = 'D'; point = 2.0; }
-    else if (total >= 30) { grade = 'E'; point = 1.0; }
-
-    return { total, grade, point };
-  };
-
-  const showError = (msg: string) => {
-    setErrorMessage(msg);
-    setIsError(true);
-    setSaveSuccess(false);
-    setTimeout(() => setIsError(false), 5000); // 5 sec timeout for error toast
+  // ── Cell Edit ──
+  const handleCellEdit = (index: number, field: string, value: string) => {
+    const updated = [...rows];
+    updated[index] = { ...updated[index], [field]: value };
+    setRows(updated);
   };
 
   const revertRow = (index: number) => {
-    const backupRows = [...rows];
-    backupRows[index] = JSON.parse(JSON.stringify(originalRows[index]));
-    setRows(backupRows);
+    const updated = [...rows];
+    updated[index] = JSON.parse(JSON.stringify(originalRows[index]));
+    setRows(updated);
   };
 
-  const saveRowToDB = async (row: any, newRows: any[], index: number) => {
-    setIsSaving(true);
-    setSaveSuccess(false);
-    setIsError(false);
+  // ── Save row to DB ──
+  const saveRowToDB = async (index: number) => {
+    const row = rows[index];
+    const ca = row.ca_score === "" ? 0 : Number(row.ca_score);
+    const ex = row.exam_score === "" ? 0 : Number(row.exam_score);
 
-    const selectedCourse = availableCourses.find(c => c.course_code === courseCode);
-    if (!selectedCourse) {
-      showError("System Error: No valid course context identified for sync.");
-      setIsSaving(false);
+    if (ca > 40) {
+      showToast("error", "CA Score cannot exceed 40 points.");
+      revertRow(index);
+      return;
+    }
+    if (ex > 70) {
+      showToast("error", "Exam Score cannot exceed 70 points.");
+      revertRow(index);
+      return;
+    }
+    if (ca + ex > 100) {
+      showToast("error", "Total Score (CA + Exam) cannot exceed 100.");
+      revertRow(index);
       return;
     }
 
-    const resultPayload = {
+    showToast("saving", "Saving to cloud ledger...");
+    const selectedCourse = availableCourses.find((c) => c.course_code === courseCode);
+    if (!selectedCourse) { showToast("error", "No valid course context."); return; }
+
+    const { total, grade, point } = computeGrade(ca, ex);
+    const payload = {
       student_id: row.student_id,
       course_id: selectedCourse.id,
-      ca_score: row.ca_score === '' ? null : Number(row.ca_score),
-      exam_score: row.exam_score === '' ? null : Number(row.exam_score),
-      total_score: row.total_score,
-      letter_grade: row.letter_grade,
-      grade_point: row.grade_point,
+      ca_score: ca,
+      exam_score: ex,
+      total_score: total,
+      letter_grade: grade,
+      grade_point: point,
       academic_year: session,
-      semester: semester,
-      status: row.status || 'draft',
-      uploaded_by: userId
+      semester,
+      status: "draft",
+      uploaded_by: userId,
     };
 
-    let error;
+    let error: any;
     if (row.id) {
-        const res = await supabase.from('results').update(resultPayload).eq('id', row.id);
-        error = res.error;
+      const res = await supabase.from("results").update(payload).eq("id", row.id);
+      error = res.error;
     } else {
-        const res = await supabase.from('results').insert(resultPayload).select().single();
-        if (!res.error && res.data) {
-           newRows[index].id = res.data.id;
-           setRows([...newRows]); // trigger update with ID
-        }
-        error = res.error;
+      const res = await supabase.from("results").insert(payload).select().single();
+      if (!res.error && res.data) {
+        const updated = [...rows];
+        updated[index] = { ...updated[index], id: res.data.id };
+        setRows(updated);
+      }
+      error = res.error;
     }
 
     if (!error) {
-      // Sync successful: lock in the new backup original row buffer
+      const updated = [...rows];
+      updated[index] = { ...updated[index], ca_score: ca, exam_score: ex, total_score: total, letter_grade: grade, grade_point: point };
+      setRows(updated);
       const newOriginals = [...originalRows];
-      newOriginals[index] = JSON.parse(JSON.stringify(newRows[index]));
+      newOriginals[index] = JSON.parse(JSON.stringify(updated[index]));
       setOriginalRows(newOriginals);
-      
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
+      showToast("success", "Row synchronized with cloud ledger.");
     } else {
-      console.error("Database Sync exception:", error);
-      const errorMsg = error?.message || error?.details || "Unknown Database Synchronization Exception";
-      showError(`Database Sync Error: ${errorMsg}`);
+      const msg = error?.message || error?.details || "Database synchronization error.";
+      showToast("error", `Sync Error: ${msg}`);
       revertRow(index);
     }
-    
-    setIsSaving(false);
-  };
-
-  const handleCellEdit = (index: number, field: string, value: string) => {
-    const newRows = [...rows];
-    newRows[index][field] = value;
-    setRows(newRows);
   };
 
   const handleKeyDown = async (e: React.KeyboardEvent, index: number) => {
-    if (e.key === 'Enter') {
-      const row = rows[index];
-      const ca = row.ca_score === '' ? 0 : Number(row.ca_score);
-      const ex = row.exam_score === '' ? 0 : Number(row.exam_score);
-      
-      // 1. STRICT FRONTEND VALIDATION CHECKS
-      if (ca > 40) {
-        showError("Input Error: Class Assessment (CA) score cannot exceed the maximum limit of 40 points.");
-        revertRow(index);
-        return;
-      }
-      
-      if (ex > 70) {
-        showError("Input Error: Exam score cannot exceed the maximum limit of 70 points.");
-        revertRow(index);
-        return;
-      }
-      
-      const { total, grade, point } = calculateGrade(ca, ex);
-      
-      if (total > 100) {
-        showError("Input Error: Combined total score cannot mathematically exceed 100 points.");
-        revertRow(index);
-        return;
-      }
-      
-      // Validation Passed: Pre-calculate the new state
-      const updatedRow = { ...row, total_score: total, letter_grade: grade, grade_point: point, status: 'draft' };
-      
-      const newRows = [...rows];
-      newRows[index] = updatedRow;
-      setRows(newRows);
-      
-      setIsReleased(false);
-      
-      // Commit cleanly to Supabase
-      await saveRowToDB(updatedRow, newRows, index);
+    if (e.key === "Enter") {
+      (e.target as HTMLInputElement).blur();
+      await saveRowToDB(index);
     }
   };
 
-  const handleRelease = async () => {
-    setIsSaving(true);
-    setSaveSuccess(false);
-    setIsError(false);
+  // ── Batch upload commit ──
+  const handleBatchCommit = async (parsedRows: any[]) => {
+    showToast("saving", "Committing batch to cloud ledger...");
+    const selectedCourse = availableCourses.find((c) => c.course_code === courseCode);
+    if (!selectedCourse) { showToast("error", "No valid course context."); return; }
 
-    // Bulk update release status to DB
-    const selectedCourse = availableCourses.find(c => c.course_code === courseCode);
-    if (!selectedCourse) return;
+    const payload = parsedRows
+      .map((parsed) => {
+        const studentRow = rows.find((r) => r.reg_number === parsed.reg_number);
+        if (!studentRow) return null;
+        const { total, grade, point } = computeGrade(parsed.ca_score, parsed.exam_score);
+        return {
+          ...(studentRow.id ? { id: studentRow.id } : {}),
+          student_id: studentRow.student_id,
+          course_id: selectedCourse.id,
+          ca_score: parsed.ca_score,
+          exam_score: parsed.exam_score,
+          total_score: total,
+          letter_grade: grade,
+          grade_point: point,
+          academic_year: session,
+          semester,
+          status: "draft",
+          uploaded_by: userId,
+        };
+      })
+      .filter(Boolean);
 
+    if (payload.length > 0) {
+      const { error } = await supabase.from("results").upsert(payload as any[], { onConflict: "id" });
+      if (error) {
+        showToast("error", `Batch Error: ${error.message || "Unknown error."}`);
+      } else {
+        showToast("success", `${payload.length} records committed to cloud ledger.`);
+        // Refresh grid
+        const oldL = level;
+        setLevel("_REFRESH_");
+        setTimeout(() => setLevel(oldL), 60);
+      }
+    } else {
+      showToast("error", "No matching students found for the uploaded records.");
+    }
+    setUploadOpen(false);
+  };
+
+  // ── Release results ──
+  const handleRelease = async (password: string) => {
+    setIsReleasing(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setIsReleasing(false); return; }
+
+    // Re-authenticate to verify password
+    const { error: authErr } = await supabase.auth.signInWithPassword({
+      email: userEmail,
+      password,
+    });
+    if (authErr) {
+      showToast("error", "Incorrect password. Release aborted.");
+      setIsReleasing(false);
+      setReleaseModal(false);
+      return;
+    }
+
+    const selectedCourse = availableCourses.find((c) => c.course_code === courseCode);
+    if (!selectedCourse) { setIsReleasing(false); return; }
+
+    const resultIds = rows.filter((r) => r.id).map((r) => r.id);
     const { error } = await supabase
-      .from('results')
-      .update({ status: 'released' })
-      .eq('course_id', selectedCourse.id)
-      .eq('academic_year', session);
+      .from("results")
+      .update({ status: "released" })
+      .in("id", resultIds);
 
     if (!error) {
-      const newRows = rows.map(r => ({ ...r, status: 'released' }));
-      setRows(newRows);
-      setOriginalRows(JSON.parse(JSON.stringify(newRows)));
       setIsReleased(true);
-      setAuthModal(false);
-      setAuthPassword("");
-      
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
+      setRows((prev) => prev.map((r) => ({ ...r, status: "released" })));
+      showToast("success", "Results released. Students can now view their scores.");
     } else {
-      showError("Database Sync Error: Unable to release results to the student portal.");
+      showToast("error", `Release failed: ${error.message}`);
     }
-    setIsSaving(false);
+    setIsReleasing(false);
+    setReleaseModal(false);
   };
 
-  const exportToExcel = () => {
-    if (rows.length === 0) return;
-    const csvContent = [
-      "Student Name,Reg. No.,CA,Exam,Total,Grade,Grade Point",
-      ...rows.map(r => `"${r.name}","${r.reg_number}",${r.ca_score === '' ? 0 : r.ca_score},${r.exam_score === '' ? 0 : r.exam_score},${r.total_score},"${r.letter_grade}",${r.grade_point}`)
-    ].join("\n");
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  // ── CSV Export ──
+  const handleExport = () => {
+    const headers = ["Student Name", "Reg No", "CA", "Exam", "Total", "Grade", "Grade Point"];
+    const csvRows = rows.map((r) =>
+      [r.name, r.reg_number, r.ca_score, r.exam_score, r.total_score, r.letter_grade, r.grade_point].join(",")
+    );
+    const csv = [headers.join(","), ...csvRows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `futo_results_${courseCode}_${session.replace('/', '-')}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${dept}_${courseCode}_${session}_results.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const handlePrint = () => {
-    window.print();
+  // ── Level options (restricted for lecturers) ──
+  const levelOptions = (() => {
+    if (userRole === "lecturer" && allocatedData.length > 0) {
+      return Array.from(
+        new Set(allocatedData.filter((c) => c.department === dept).map((c) => `${c.level}L`))
+      );
+    }
+    return ["100L", "200L", "300L", "400L", "500L"];
+  })();
+
+  const semesterOptions = (() => {
+    if (userRole === "lecturer" && allocatedData.length > 0) {
+      const lvlNum = parseInt(level.replace("L", ""));
+      return Array.from(
+        new Set(allocatedData.filter((c) => c.department === dept && c.level === lvlNum).map((c) => c.semester))
+      );
+    }
+    return ["Harmattan", "Rain"];
+  })();
+
+  // ── Grade badge color ──
+  const gradeBadgeClass = (grade: string) => {
+    if (grade === "A") return "bg-emerald-500/20 text-emerald-400 border-emerald-500/20";
+    if (grade === "B") return "bg-sky-500/20 text-sky-400 border-sky-500/20";
+    if (grade === "C") return "bg-amber-500/20 text-amber-400 border-amber-500/20";
+    if (grade === "D") return "bg-orange-500/20 text-orange-400 border-orange-500/20";
+    if (grade === "F") return "bg-rose-500/20 text-rose-400 border-rose-500/20";
+    return "bg-[#1E293B] text-[#475569] border-[#1E293B]";
   };
+
+  const SelectInput = ({ value, onChange, children, disabled }: any) => (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      className="bg-[#0F1524] border border-[#1E293B] text-[12px] font-semibold text-[#F8FAFC] rounded-lg px-3 py-2 outline-none focus:border-emerald-500/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed appearance-none cursor-pointer"
+    >
+      {children}
+    </select>
+  );
 
   return (
-    <div className="flex flex-col h-[calc(100vh-64px)] md:h-screen bg-slate-50 overflow-hidden relative">
-      
-      {/* Toast Notification Banner */}
-      <div className={`absolute top-4 right-1/2 translate-x-1/2 md:translate-x-0 md:right-8 z-50 flex items-center space-x-3 px-6 py-3 rounded-full shadow-lg transition-all duration-300 max-w-[90vw] md:max-w-md ${
-        isSaving ? 'bg-indigo-600 text-white translate-y-0 opacity-100' : 
-        isError ? 'bg-rose-500 text-white translate-y-0 opacity-100' :
-        saveSuccess ? 'bg-emerald-500 text-white translate-y-0 opacity-100' : '-translate-y-12 opacity-0'
-      }`}>
-        {isSaving ? <Loader2 className="w-5 h-5 animate-spin shrink-0" /> : 
-         isError ? <AlertTriangle className="w-5 h-5 shrink-0" /> : 
-         <CheckCircle2 className="w-5 h-5 shrink-0" />}
-        <span className="text-sm font-bold tracking-wide leading-tight">
-          {isSaving ? 'Saving changes to core database ledger...' : 
-           isError ? errorMessage : 'Changes synchronized with cloud ledger.'}
-        </span>
-      </div>
+    <div className="flex flex-col h-screen bg-[#070A12] overflow-hidden">
+      {/* Toast */}
+      {toast && <Toast type={toast.type} message={toast.message} onDismiss={dismissToast} />}
 
-      {/* Section 1: Parameter Controls (25%) */}
-      <div className="h-auto md:h-[25%] bg-white border-b border-slate-200 p-6 flex flex-col justify-between shrink-0">
-        <div className="w-full sm:w-auto">
-          <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">{dept} Result Matrix</h2>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mt-1">Parameter Selection</p>
+      {/* Release Modal */}
+      {releaseModal && (
+        <ReleaseModal
+          onConfirm={handleRelease}
+          onCancel={() => setReleaseModal(false)}
+          isLoading={isReleasing}
+        />
+      )}
+
+      {/* Upload Modal */}
+      <UploadModal
+        isOpen={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        onCommit={handleBatchCommit}
+      />
+
+      {/* ── SECTION 1: Parameter Controls (25%) ── */}
+      <div className="shrink-0 h-auto md:h-[25%] bg-[#0A0F1C] border-b border-[#1E293B] px-5 py-4 flex flex-col justify-between gap-4 no-print">
+        <div>
+          <h2 className="text-[15px] font-black text-[#F8FAFC] tracking-tight">
+            {dept || "—"} Result Matrix
+          </h2>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-[#475569] mt-0.5">
+            Parameter Selection
+          </p>
         </div>
-        
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mt-4 w-full">
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:items-center sm:gap-3 w-full sm:w-auto">
-            <select value={level} onChange={e => setLevel(e.target.value)} className="bg-slate-50 border border-slate-200 text-sm font-semibold rounded-lg px-3 py-2 text-slate-700 outline-none focus:border-[#0d5c2e]">
-              <option value="100L">100L</option>
-              <option value="200L">200L</option>
-              <option value="300L">300L</option>
-              <option value="400L">400L</option>
-              <option value="500L">500L</option>
-            </select>
-            
-            <select value={semester} onChange={e => setSemester(e.target.value)} className="bg-slate-50 border border-slate-200 text-sm font-semibold rounded-lg px-3 py-2 text-slate-700 outline-none focus:border-[#0d5c2e]">
-              <option value="Harmattan">Harmattan</option>
-              <option value="Rain">Rain</option>
-            </select>
-            
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          {/* Filters */}
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
+            <SelectInput
+              value={level}
+              onChange={setLevel}
+              disabled={userRole === "lecturer" && allocatedData.length === 0}
+            >
+              {levelOptions.map((l) => <option key={l} value={l}>{l}</option>)}
+            </SelectInput>
+
+            <SelectInput
+              value={semester}
+              onChange={setSemester}
+              disabled={userRole === "lecturer" && allocatedData.length === 0}
+            >
+              {semesterOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+            </SelectInput>
+
             {isStaff && (
-              <select 
-                value={courseCode} 
-                onChange={e => setCourseCode(e.target.value)} 
+              <SelectInput
+                value={courseCode}
+                onChange={setCourseCode}
                 disabled={hasNoCourses}
-                className="bg-slate-50 border border-slate-200 text-sm font-semibold rounded-lg px-3 py-2 text-slate-700 outline-none focus:border-[#0d5c2e] w-full sm:w-auto min-w-[120px] disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {isLoadingCourses ? (
                   <option value="">Loading...</option>
                 ) : hasNoCourses ? (
-                  <option value="">Not available</option>
+                  <option value="">No Courses</option>
                 ) : (
-                  availableCourses.map(course => (
-                    <option key={course.id} value={course.course_code}>{course.course_code}</option>
+                  availableCourses.map((c) => (
+                    <option key={c.id} value={c.course_code}>{c.course_code}</option>
                   ))
                 )}
-              </select>
+              </SelectInput>
             )}
-            
-            <select value={session} onChange={e => setSession(e.target.value)} className="bg-slate-50 border border-slate-200 text-sm font-semibold rounded-lg px-3 py-2 text-slate-700 outline-none focus:border-[#0d5c2e]">
+
+            <SelectInput value={session} onChange={setSession}>
               <option value="2023/2024">2023/2024</option>
               <option value="2024/2025">2024/2025</option>
               <option value="2025/2026">2025/2026</option>
-            </select>
+            </SelectInput>
           </div>
 
+          {/* Actions */}
           {isStaff && (
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:space-x-3 w-full sm:w-auto">
-              <div className="relative w-full sm:w-auto">
-                <button 
-                  onClick={() => setUploadPrompt(!uploadPrompt)}
-                  disabled={hasNoCourses}
-                  className="flex w-full items-center justify-center space-x-2 px-4 py-2 bg-[#f0f9f4] text-[#0d5c2e] font-bold text-sm rounded-lg hover:bg-[#e6f2eb] border border-[#0d5c2e]/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Upload className="w-4 h-4" />
-                  <span>Upload File</span>
-                </button>
-                {uploadPrompt && (
-                  <div className="absolute right-0 top-12 w-64 bg-slate-900 text-white text-xs p-4 rounded-xl shadow-2xl z-50">
-                    <p className="font-bold mb-2 text-emerald-400"><AlertTriangle className="inline w-3 h-3 mr-1"/> Expected Column Map:</p>
-                    <code className="block bg-slate-800 p-2 rounded text-slate-300">reg_number, ca_score, exam_score</code>
-                  </div>
-                )}
-              </div>
-              <button 
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setUploadOpen(true)}
+                disabled={hasNoCourses}
+                className="flex items-center gap-2 px-3 py-2 bg-[#0F1524] border border-[#1E293B] hover:border-emerald-500/30 text-[12px] font-bold text-[#94A3B8] hover:text-emerald-400 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Upload File</span>
+              </button>
+
+              <button
                 onClick={() => setIsEditing(!isEditing)}
                 disabled={hasNoCourses || isGridLoading}
-                className={`flex w-full items-center justify-center space-x-2 px-4 py-2 font-bold text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                  isEditing 
-                    ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-300' 
-                    : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                className={`flex items-center gap-2 px-3 py-2 text-[12px] font-bold rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                  isEditing
+                    ? "bg-amber-500/15 border border-amber-500/30 text-amber-400"
+                    : "bg-[#0F1524] border border-[#1E293B] hover:border-[#334155] text-[#94A3B8]"
                 }`}
               >
-                {isEditing ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
-                <span>{isEditing ? 'Done Editing' : 'Edit Matrix'}</span>
+                {isEditing ? <Save className="w-3.5 h-3.5" /> : <Edit3 className="w-3.5 h-3.5" />}
+                <span>{isEditing ? "Done Editing" : "Edit Matrix"}</span>
               </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* Section 2: Spreadsheet Data Grid (60%) */}
-      <div className="h-[60%] overflow-auto bg-slate-50 border-b border-slate-200 print:h-auto relative">
-        {hasNoCourses ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center bg-white">
-            <div className="w-20 h-20 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-center mb-6">
-              <AlertTriangle className="w-8 h-8 text-slate-300" />
+      {/* ── SECTION 2: Data Grid (60%) ── */}
+      <div className="flex-1 overflow-auto relative" style={{ maxHeight: "60vh" }}>
+        {isGridLoading ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="flex items-center gap-3 text-[13px] font-bold text-[#64748B]">
+              <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />
+              <span>Loading result matrix...</span>
             </div>
-            <p className="text-slate-500 font-medium max-w-md leading-relaxed">
-              No academic curriculum data has been provided for this department parameters yet.
+          </div>
+        ) : hasNoCourses ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
+            <div className="w-16 h-16 bg-[#0F1524] border border-[#1E293B] rounded-2xl flex items-center justify-center mb-4">
+              <AlertTriangle className="w-7 h-7 text-[#334155]" />
+            </div>
+            <p className="text-[13px] font-medium text-[#475569] max-w-sm leading-relaxed">
+              No academic curriculum data found for the selected parameters.
             </p>
           </div>
+        ) : rows.length === 0 && !isGridLoading ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
+            <Loader2 className="w-5 h-5 animate-spin text-[#334155] mb-3" />
+            <p className="text-[12px] text-[#475569]">Fetching student records...</p>
+          </div>
         ) : (
-          <table className="w-full text-left border-collapse min-w-[800px]">
-            <thead className="sticky top-0 bg-white shadow-sm z-10">
+          <table className="w-full text-left border-collapse min-w-[700px] print-white">
+            <thead className="sticky top-0 z-20 bg-[#0A0F1C] border-b border-[#1E293B]">
               <tr>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200">Student Name</th>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200">Reg. No.</th>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200 w-24">CA</th>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200 w-24">Exam</th>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200">Total</th>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200">Grade</th>
-                <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200">Grade Point</th>
-                {isEditing && <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-500 border-b border-slate-200">Action</th>}
+                <th className="sticky left-0 z-30 bg-[#0A0F1C] px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569] border-r border-[#1E293B] whitespace-nowrap">
+                  Student Name
+                </th>
+                <th className="sticky left-0 z-30 bg-[#0A0F1C] px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569] border-r border-[#1E293B] whitespace-nowrap">
+                  Reg. No.
+                </th>
+                <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569] w-20">CA</th>
+                <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569] w-20">Exam</th>
+                <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569]">Total</th>
+                <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569]">Grade</th>
+                <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569]">GPA</th>
+                {isEditing && (
+                  <th className="px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-[#475569]">Save</th>
+                )}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 bg-white">
+            <tbody className="divide-y divide-[#0F1524]">
               {rows.map((row, i) => (
-                <tr key={row.student_id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-6 py-3 text-sm font-bold text-slate-900">{row.name}</td>
-                  <td className="px-6 py-3 text-sm font-semibold text-slate-600 font-mono">{row.reg_number}</td>
-                  <td className="px-6 py-3">
+                <tr
+                  key={row.student_id}
+                  className="hover:bg-[#0F1524]/60 transition-colors group"
+                >
+                  <td className="sticky left-0 z-10 bg-[#070A12] group-hover:bg-[#0F1524]/60 px-3 py-2 text-[12px] font-bold text-[#F8FAFC] border-r border-[#1E293B] whitespace-nowrap transition-colors">
+                    {row.name}
+                  </td>
+                  <td className="sticky left-0 z-10 bg-[#070A12] group-hover:bg-[#0F1524]/60 px-3 py-2 text-[12px] font-mono font-semibold text-[#94A3B8] border-r border-[#1E293B] whitespace-nowrap transition-colors">
+                    {row.reg_number}
+                  </td>
+                  <td className="px-3 py-2">
                     {isEditing ? (
-                      <input 
-                        type="number" 
+                      <input
+                        type="number"
+                        min={0}
+                        max={40}
                         value={row.ca_score}
-                        onChange={(e) => handleCellEdit(i, 'ca_score', e.target.value)}
+                        onChange={(e) => handleCellEdit(i, "ca_score", e.target.value)}
                         onKeyDown={(e) => handleKeyDown(e, i)}
-                        className="w-16 px-2 py-1 text-sm border-b-2 border-emerald-500 bg-emerald-50 outline-none focus:bg-emerald-100 transition-colors"
+                        className="w-16 p-2 sm:p-1 text-base sm:text-[12px] bg-emerald-500/10 border-b-2 border-emerald-500 text-[#F8FAFC] font-mono outline-none rounded transition-colors"
                       />
                     ) : (
-                      <span className="text-sm font-semibold text-slate-700">{row.ca_score}</span>
+                      <span className="text-[12px] font-mono text-[#94A3B8]">{row.ca_score}</span>
                     )}
                   </td>
-                  <td className="px-6 py-3">
+                  <td className="px-3 py-2">
                     {isEditing ? (
-                      <input 
-                        type="number" 
+                      <input
+                        type="number"
+                        min={0}
+                        max={70}
                         value={row.exam_score}
-                        onChange={(e) => handleCellEdit(i, 'exam_score', e.target.value)}
+                        onChange={(e) => handleCellEdit(i, "exam_score", e.target.value)}
                         onKeyDown={(e) => handleKeyDown(e, i)}
-                        className="w-16 px-2 py-1 text-sm border-b-2 border-emerald-500 bg-emerald-50 outline-none focus:bg-emerald-100 transition-colors"
+                        className="w-16 p-2 sm:p-1 text-base sm:text-[12px] bg-emerald-500/10 border-b-2 border-emerald-500 text-[#F8FAFC] font-mono outline-none rounded transition-colors"
                       />
                     ) : (
-                      <span className="text-sm font-semibold text-slate-700">{row.exam_score}</span>
+                      <span className="text-[12px] font-mono text-[#94A3B8]">{row.exam_score}</span>
                     )}
                   </td>
-                  <td className="px-6 py-3 text-sm font-black text-slate-900">{row.total_score}</td>
-                  <td className="px-6 py-3">
-                    <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg text-sm font-black ${
-                      row.letter_grade === 'A' || row.letter_grade === 'B' ? 'bg-[#e6f2eb] text-[#0d5c2e]' : 
-                      row.letter_grade === 'F' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-700'
-                    }`}>
+                  <td className="px-3 py-2 text-[12px] font-black font-mono text-[#F8FAFC]">
+                    {row.total_score || "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={`inline-flex items-center justify-center w-7 h-7 rounded-lg text-[11px] font-black border ${gradeBadgeClass(row.letter_grade)}`}>
                       {row.letter_grade}
                     </span>
                   </td>
-                  <td className="px-6 py-3 text-sm font-bold text-slate-600">{row.grade_point?.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-[12px] font-mono font-bold text-[#64748B]">
+                    {row.grade_point ?? "—"}
+                  </td>
                   {isEditing && (
-                    <td className="px-6 py-3">
-                      <button 
-                        onClick={() => handleKeyDown({ key: 'Enter' } as React.KeyboardEvent, i)}
-                        className="text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1 rounded"
+                    <td className="px-3 py-2">
+                      <button
+                        onClick={() => saveRowToDB(i)}
+                        className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/20 text-emerald-400 text-[11px] font-bold rounded-lg transition-all"
                       >
-                        Save
+                        <Save className="w-3 h-3" />
+                        <span>Save</span>
                       </button>
                     </td>
                   )}
                 </tr>
               ))}
-              {rows.length === 0 && !isGridLoading && (
-                <tr>
-                  <td colSpan={isEditing ? 8 : 7} className="px-6 py-12 text-center text-slate-500 font-medium">
-                    No records populated for this matrix.
-                  </td>
-                </tr>
-              )}
-              {isGridLoading && (
-                <tr>
-                  <td colSpan={isEditing ? 8 : 7} className="px-6 py-12 text-center text-slate-500 font-medium">
-                    <Loader2 className="w-6 h-6 animate-spin mx-auto text-emerald-500" />
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         )}
       </div>
 
-      {/* Section 3: Action Toolbar (15%) */}
-      <div className="h-auto md:h-[15%] w-full flex flex-col sm:flex-row justify-between items-center gap-3 p-4 bg-slate-900/10 border-t border-slate-200 rounded-xl sm:rounded-none shrink-0 print:hidden mt-auto">
-        
-        <button onClick={handlePrint} className="w-full sm:w-auto flex items-center justify-center space-x-2 px-4 py-2 bg-white border border-slate-200 text-slate-600 font-bold text-sm rounded-lg hover:bg-slate-50 transition-colors">
+      {/* ── SECTION 3: Footer Toolbar (15%) ── */}
+      <div className="shrink-0 h-auto md:h-[15%] bg-[#0A0F1C] border-t border-[#1E293B] px-5 py-4 flex items-center justify-between gap-3 no-print">
+        {/* Left — Print */}
+        <button
+          onClick={() => window.print()}
+          className="flex items-center gap-2 px-4 py-2.5 bg-[#0F1524] border border-[#1E293B] hover:border-[#334155] text-[12px] font-bold text-[#94A3B8] hover:text-[#F8FAFC] rounded-xl transition-all"
+        >
           <Printer className="w-4 h-4" />
-          <span>Print Document</span>
+          <span className="hidden sm:block">Print Document</span>
         </button>
 
+        {/* Center — Release (Staff only) */}
         {isStaff && (
-          <button 
-            onClick={() => setAuthModal(true)}
-            disabled={!allRowsValid || isReleased || isEditing || hasNoCourses}
-            className={`w-full sm:w-auto flex items-center justify-center space-x-2 px-8 py-3 font-black text-sm rounded-xl uppercase tracking-wider transition-all shadow-md ${
-              isReleased 
-                ? 'bg-emerald-500 text-white shadow-emerald-500/20' 
-                : allRowsValid && !isEditing
-                  ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-indigo-600/20' 
-                  : 'bg-slate-200 text-slate-500 cursor-not-allowed shadow-none'
-            }`}
-          >
-            {isReleased ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
-            <span>{isReleased ? 'Results Released' : 'Release Results'}</span>
-          </button>
+          <div className="flex-1 flex justify-center">
+            {isReleased ? (
+              <div className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[12px] font-black rounded-xl">
+                <Lock className="w-4 h-4" />
+                <span>Results Released</span>
+              </div>
+            ) : (
+              <button
+                onClick={() => setReleaseModal(true)}
+                disabled={!allRowsGraded || hasNoCourses}
+                className="flex items-center gap-2 px-5 py-2.5 bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 text-[12px] font-black rounded-xl transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <Unlock className="w-4 h-4" />
+                <span>Release Results</span>
+              </button>
+            )}
+          </div>
         )}
 
-        <button 
-          onClick={exportToExcel} 
+        {/* Right — Export CSV */}
+        <button
+          onClick={handleExport}
           disabled={rows.length === 0}
-          className="w-full sm:w-auto flex items-center justify-center space-x-2 px-4 py-2 bg-white text-[#0d5c2e] font-bold text-sm rounded-lg hover:bg-[#e6f2eb] border border-slate-200 transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-2.5 bg-[#0F1524] border border-[#1E293B] hover:border-[#334155] text-[12px] font-bold text-[#94A3B8] hover:text-[#F8FAFC] rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Download className="w-4 h-4" />
-          <span>Export .csv</span>
+          <span className="hidden sm:block">Export .csv</span>
         </button>
-
       </div>
-
-      {/* Auth Modal Overlay */}
-      {authModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6">
-            <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mb-4">
-              <ShieldCheck className="w-6 h-6" />
-            </div>
-            <h3 className="text-lg font-black text-slate-900 mb-2">Authorize Release</h3>
-            <p className="text-sm font-medium text-slate-500 mb-6 leading-relaxed">
-              You are about to permanently publish this ledger to the student view portal. Please verify your identity.
-            </p>
-            <input 
-              type="password" 
-              value={authPassword}
-              onChange={e => setAuthPassword(e.target.value)}
-              placeholder="Enter your password"
-              className="w-full border border-slate-300 rounded-lg px-4 py-3 text-sm font-semibold text-slate-900 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 outline-none mb-4"
-            />
-            <div className="flex space-x-3">
-              <button 
-                onClick={() => setAuthModal(false)}
-                className="flex-1 px-4 py-2 bg-slate-100 text-slate-600 font-bold text-sm rounded-lg hover:bg-slate-200 transition"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={handleRelease}
-                disabled={!authPassword || isSaving}
-                className="flex-1 px-4 py-2 bg-indigo-600 text-white font-bold text-sm rounded-lg hover:bg-indigo-700 transition disabled:opacity-50"
-              >
-                {isSaving ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : 'Verify & Release'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }
