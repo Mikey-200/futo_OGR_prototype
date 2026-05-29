@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserClient } from "@supabase/ssr";
-import { Terminal, Shield, Loader2, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { BookMarked, Shield, Loader2, AlertCircle, Eye, EyeOff } from "lucide-react";
 import type { UserRole } from "@/types";
 
 export default function LoginPage() {
@@ -26,22 +26,60 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      // Step 1 — Authenticate with Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
-
       if (authError) throw new Error(authError.message);
-      if (!authData.user) throw new Error("Authentication failed. No user returned.");
+      if (!authData.user) throw new Error("Authentication failed — no user session returned.");
 
+      const uid = authData.user.id;
+
+      // Step 2 — Fetch profile from public.users
       const { data: userData, error: userError } = await supabase
         .from("users")
-        .select("role, department")
-        .eq("id", authData.user.id)
+        .select("role, department, school, full_name")
+        .eq("id", uid)
         .single();
 
-      if (userError || !userData) throw new Error("Failed to retrieve user profile.");
+      if (userError || !userData) {
+        // If user not in public.users yet, sign out gracefully
+        await supabase.auth.signOut();
+        throw new Error(
+          "Your account profile is not yet activated. Contact your portal administrator."
+        );
+      }
 
+      // Step 3 — Enrich profile based on role
+      let dept = userData.department || "";
+      let firstCourse: any = null;
+
+      if (userData.role === "student") {
+        // Pull dept from students table if missing
+        const { data: studentData } = await supabase
+          .from("students")
+          .select("department, current_level")
+          .eq("profile_id", uid)
+          .single();
+        if (studentData) {
+          dept = studentData.department;
+        }
+      }
+
+      if (userData.role === "lecturer") {
+        // Fetch first allocation for smart redirect
+        const { data: allocations } = await supabase
+          .from("lecturer_allocations")
+          .select("courses(department, course_code, level, semester)")
+          .eq("lecturer_id", uid)
+          .limit(1);
+        if (allocations && allocations.length > 0) {
+          firstCourse = (allocations[0] as any).courses;
+        }
+      }
+
+      // Step 4 — Navigate based on DB role (not the UI dropdown)
       router.refresh();
 
       switch (userData.role) {
@@ -49,19 +87,25 @@ export default function LoginPage() {
           router.push("/admin");
           break;
         case "hod":
-          router.push(`/results?dept=${userData.department || "IFT"}`);
+          router.push(`/results?dept=${dept || "IFT"}`);
           break;
         case "lecturer":
-          router.push("/results");
+          if (firstCourse) {
+            router.push(
+              `/results?dept=${firstCourse.department}&course=${firstCourse.course_code}&level=${firstCourse.level}L&semester=${firstCourse.semester}`
+            );
+          } else {
+            router.push("/results");
+          }
           break;
         case "student":
           router.push("/student");
           break;
         default:
-          throw new Error("Unknown access role. Contact your administrator.");
+          throw new Error("Unrecognized access role — contact your administrator.");
       }
     } catch (err: any) {
-      setError(err.message || "An unexpected error occurred.");
+      setError(err.message || "An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -74,95 +118,77 @@ export default function LoginPage() {
     student: "20201234567@futo.edu.ng",
   };
 
-  const roleOptions = [
-    { value: "student", label: "Student — Ledger Access" },
-    { value: "lecturer", label: "Lecturer / Faculty" },
-    { value: "hod", label: "Head of Department (HOD)" },
-    { value: "dean", label: "Dean of School" },
-  ];
-
   return (
-    <div className="min-h-screen flex bg-[#070A12]">
-      {/* Left Branding Panel */}
-      <div className="hidden lg:flex flex-col justify-between w-[45%] bg-[#0A0F1C] border-r border-[#1E293B] p-12 relative overflow-hidden">
-        {/* Grid background pattern */}
-        <div className="absolute inset-0 opacity-5 pointer-events-none">
+    <div className="min-h-screen flex bg-[#F8FAFC]">
+
+      {/* Left brand panel */}
+      <div className="hidden lg:flex flex-col justify-between w-[44%] bg-[#15803D] p-12 relative overflow-hidden">
+        {/* Grid pattern overlay */}
+        <div className="absolute inset-0 opacity-10 pointer-events-none">
           <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
             <defs>
-              <pattern id="hud-grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#10B981" strokeWidth="0.5" />
+              <pattern id="g" width="44" height="44" patternUnits="userSpaceOnUse">
+                <path d="M 44 0 L 0 0 0 44" fill="none" stroke="white" strokeWidth="0.8" />
               </pattern>
             </defs>
-            <rect width="100%" height="100%" fill="url(#hud-grid)" />
+            <rect width="100%" height="100%" fill="url(#g)" />
           </svg>
         </div>
 
-        {/* Glow orb */}
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
-
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-16">
-            <div className="w-10 h-10 bg-emerald-500/20 border border-emerald-500/30 rounded-xl flex items-center justify-center">
-              <Terminal className="w-5 h-5 text-emerald-400" />
+            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center border border-white/30">
+              <BookMarked className="w-5 h-5 text-white" />
             </div>
             <div>
-              <div className="text-[11px] font-black tracking-[0.2em] text-emerald-400/70 uppercase">
-                Federal University of Technology
-              </div>
-              <div className="text-[15px] font-black tracking-widest text-[#F8FAFC] uppercase">
-                Owerri
-              </div>
+              <div className="text-[10px] font-black tracking-[0.2em] text-white/60 uppercase">Federal University of Technology</div>
+              <div className="text-[15px] font-black tracking-widest text-white uppercase">Owerri</div>
             </div>
           </div>
 
-          <h1 className="text-5xl font-black text-[#F8FAFC] leading-[1.1] tracking-tight mb-5">
-            Academic<br />
-            <span className="text-emerald-400">Grade</span><br />
-            Portal
+          <h1 className="text-5xl font-black text-white leading-[1.1] tracking-tight mb-5">
+            Academic<br />Grade<br />Portal
           </h1>
-          <p className="text-[#64748B] text-[15px] leading-relaxed max-w-sm font-medium">
+          <p className="text-white/70 text-[15px] leading-relaxed max-w-sm font-medium">
             A unified result tracking system for students, faculty, and administrators across SICT departments.
           </p>
         </div>
 
-        <div className="relative z-10">
-          <div className="flex items-center gap-2 text-[12px] font-bold text-[#334155] uppercase tracking-widest">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 glow-pulse" />
-            <span>System Online — 2025/2026 Academic Session</span>
-          </div>
+        <div className="relative z-10 text-white/50 text-[12px] font-semibold">
+          © {new Date().getFullYear()} Federal University of Technology Owerri.
         </div>
       </div>
 
-      {/* Right Auth Panel */}
+      {/* Right auth panel */}
       <div className="flex-1 flex items-center justify-center p-8 sm:p-12">
         <div className="w-full max-w-[400px] space-y-7">
 
           {/* Mobile logo */}
           <div className="lg:hidden flex items-center gap-3 mb-2">
-            <div className="w-9 h-9 bg-emerald-500/20 border border-emerald-500/30 rounded-lg flex items-center justify-center">
-              <Terminal className="w-4.5 h-4.5 text-emerald-400" />
+            <div className="w-9 h-9 bg-[#15803D] rounded-xl flex items-center justify-center shadow-sm">
+              <BookMarked className="w-4.5 h-4.5 text-white" />
             </div>
-            <span className="text-[14px] font-black tracking-widest text-[#F8FAFC] uppercase">
-              FUTO Portal
-            </span>
+            <div>
+              <div className="text-[13px] font-black text-[#0F172A]">FUTO Portal</div>
+              <div className="text-[10px] font-bold text-[#15803D] uppercase tracking-widest">SICT Ledger</div>
+            </div>
           </div>
 
           <div>
-            <h2 className="text-2xl font-black text-[#F8FAFC] tracking-tight">Secure Sign In</h2>
+            <h2 className="text-2xl font-black text-[#0F172A] tracking-tight">Secure Sign In</h2>
             <p className="text-[13px] text-[#64748B] font-medium mt-1">
-              Specify your access category and institutional credentials.
+              Select your access category and enter your credentials.
             </p>
           </div>
 
           {error && (
-            <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 flex items-start gap-3">
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-              <p className="text-[13px] text-rose-300 font-medium">{error}</p>
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-start gap-3">
+              <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+              <p className="text-[13px] text-rose-700 font-medium">{error}</p>
             </div>
           )}
 
           <form onSubmit={handleLogin} className="space-y-5">
-            {/* Access Category */}
             <div className="space-y-1.5">
               <label className="block text-[11px] font-black uppercase tracking-widest text-[#475569]">
                 Access Category
@@ -170,20 +196,18 @@ export default function LoginPage() {
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value as UserRole)}
-                className="w-full bg-[#0F1524] border border-[#1E293B] text-[13px] font-semibold text-[#F8FAFC] rounded-xl px-4 py-3 outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 transition-all cursor-pointer appearance-none"
+                className="w-full bg-white border border-[#E2E8F0] text-[13px] font-semibold text-[#0F172A] rounded-xl px-4 py-3 outline-none focus:border-[#15803D] focus:ring-2 focus:ring-[#15803D]/10 transition-all cursor-pointer appearance-none shadow-sm"
               >
-                {roleOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value} className="bg-[#0F1524]">
-                    {opt.label}
-                  </option>
-                ))}
+                <option value="student">Student — Ledger Access</option>
+                <option value="lecturer">Lecturer / Faculty</option>
+                <option value="hod">Head of Department (HOD)</option>
+                <option value="dean">Dean of School</option>
               </select>
             </div>
 
-            {/* Email */}
             <div className="space-y-1.5">
               <label className="block text-[11px] font-black uppercase tracking-widest text-[#475569]">
-                Institutional Email / Student ID
+                Institutional Email
               </label>
               <input
                 type="email"
@@ -191,17 +215,16 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder={placeholders[role]}
                 required
-                className="w-full bg-[#0F1524] border border-[#1E293B] text-[13px] font-medium text-[#F8FAFC] placeholder:text-[#334155] rounded-xl px-4 py-3 outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 transition-all"
+                className="w-full bg-white border border-[#E2E8F0] text-[13px] font-medium text-[#0F172A] placeholder:text-[#CBD5E1] rounded-xl px-4 py-3 outline-none focus:border-[#15803D] focus:ring-2 focus:ring-[#15803D]/10 transition-all shadow-sm"
               />
             </div>
 
-            {/* Password */}
             <div className="space-y-1.5">
               <div className="flex justify-between items-center">
                 <label className="block text-[11px] font-black uppercase tracking-widest text-[#475569]">
                   Password
                 </label>
-                <a href="#" className="text-[11px] font-bold text-emerald-500/70 hover:text-emerald-400 transition-colors">
+                <a href="#" className="text-[11px] font-bold text-[#15803D] hover:underline">
                   Forgot password?
                 </a>
               </div>
@@ -212,12 +235,12 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  className="w-full bg-[#0F1524] border border-[#1E293B] text-[13px] font-medium text-[#F8FAFC] placeholder:text-[#334155] rounded-xl px-4 py-3 pr-11 outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 transition-all"
+                  className="w-full bg-white border border-[#E2E8F0] text-[13px] font-medium text-[#0F172A] placeholder:text-[#CBD5E1] rounded-xl px-4 py-3 pr-11 outline-none focus:border-[#15803D] focus:ring-2 focus:ring-[#15803D]/10 transition-all shadow-sm"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#475569] hover:text-[#94A3B8] transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#CBD5E1] hover:text-[#64748B] transition-colors"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -227,26 +250,19 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-900 disabled:text-emerald-600 text-white font-bold text-[14px] rounded-xl py-3.5 transition-all duration-150 shadow-lg shadow-emerald-900/30 mt-2"
+              className="w-full flex items-center justify-center gap-2.5 bg-[#15803D] hover:bg-[#166534] disabled:bg-[#86EFAC] disabled:cursor-not-allowed text-white font-bold text-[14px] rounded-xl py-3.5 transition-all shadow-sm shadow-[#15803D]/20 mt-2"
             >
               {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Authenticating...</span>
-                </>
+                <><Loader2 className="w-4 h-4 animate-spin" /><span>Authenticating...</span></>
               ) : (
-                <>
-                  <Shield className="w-4 h-4" />
-                  <span>Authorize Access</span>
-                </>
+                <><Shield className="w-4 h-4" /><span>Authorize Access</span></>
               )}
             </button>
           </form>
 
-          <div className="pt-5 border-t border-[#1E293B]">
-            <p className="text-[11px] text-center text-[#334155] font-medium">
-              © {new Date().getFullYear()} Federal University of Technology Owerri.
-              All rights reserved.
+          <div className="pt-5 border-t border-[#E2E8F0]">
+            <p className="text-[11px] text-center text-[#94A3B8] font-medium">
+              By signing in, you agree to the university's Terms of Service and Privacy Policy.
             </p>
           </div>
         </div>

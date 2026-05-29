@@ -4,18 +4,16 @@ import "./globals.css";
 import { createClient } from "@/lib/supabase-server";
 import Sidebar from "@/components/Sidebar";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-geist-sans" });
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
   title: "FUTO Result Portal | SICT Academic Ledger",
-  description: "Federal University of Technology Owerri — School of Information and Communication Technology Academic Grade Portal",
+  description: "Federal University of Technology Owerri — SICT Academic Grade Portal",
 };
 
 export default async function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -28,42 +26,43 @@ export default async function RootLayout({
       .eq('id', user.id)
       .single();
 
-    let fullName = userData?.full_name || '';
-
-    // For students, pull full_name from the students table if missing
-    if (userData?.role === 'student' && !fullName) {
-      const { data: studentData } = await supabase
-        .from('students')
-        .select('full_name, department')
-        .eq('profile_id', user.id)
-        .single();
-      if (studentData) {
-        fullName = studentData.full_name;
-        if (userData) userData.department = studentData.department;
-      }
-    }
-
-    // For lecturers, fetch their allocated courses from lecturer_allocations
-    let allocations: any[] = [];
-    if (userData?.role === 'lecturer') {
-      const { data: allocationsData } = await supabase
-        .from('lecturer_allocations')
-        .select('*, courses(*)')
-        .eq('lecturer_id', user.id);
-      if (allocationsData) {
-        allocations = allocationsData.map((a: any) => a.courses).filter(Boolean);
-      }
-    }
-
     if (userData) {
+      let fullName = userData.full_name || '';
+      let department = userData.department || '';
+
+      // For students: pull name + dept from students table if missing
+      if (userData.role === 'student') {
+        const { data: studentData } = await supabase
+          .from('students')
+          .select('full_name, department')
+          .eq('profile_id', user.id)
+          .single();
+        if (studentData) {
+          fullName = fullName || studentData.full_name;
+          department = department || studentData.department;
+        }
+      }
+
+      // For lecturers: fetch allocated courses
+      let allocations: any[] = [];
+      if (userData.role === 'lecturer') {
+        const { data: allocData } = await supabase
+          .from('lecturer_allocations')
+          .select('*, courses(*)')
+          .eq('lecturer_id', user.id);
+        if (allocData) {
+          allocations = allocData.map((a: any) => a.courses).filter(Boolean);
+        }
+      }
+
       userProfile = {
         id: user.id,
         email: user.email || '',
         role: userData.role,
         full_name: fullName,
-        school: userData.school,
-        department: userData.department,
-        assigned_courses: userData.assigned_courses,
+        school: userData.school || '',
+        department,
+        assigned_courses: userData.assigned_courses || [],
         allocations,
       };
     }
@@ -72,11 +71,18 @@ export default async function RootLayout({
   const isAuthenticated = !!userProfile;
 
   return (
-    <html lang="en" className="dark">
-      <body className={`${inter.variable} bg-[#070A12] text-[#F8FAFC] antialiased min-h-screen`}>
+    <html lang="en">
+      <body className={`${inter.variable} bg-[#F8FAFC] text-[#0F172A] antialiased min-h-screen`}>
         <div className="flex min-h-screen">
+          {/* Fixed 260px sidebar */}
           {isAuthenticated && <Sidebar user={userProfile!} />}
-          <main className={`flex-1 flex flex-col min-h-screen overflow-hidden ${isAuthenticated ? 'md:ml-[260px]' : ''}`}>
+
+          {/* Main content — hard left margin to prevent any overlap */}
+          <main
+            className={`flex-1 flex flex-col min-h-screen overflow-hidden ${
+              isAuthenticated ? 'md:ml-[260px]' : ''
+            }`}
+          >
             {children}
           </main>
         </div>
