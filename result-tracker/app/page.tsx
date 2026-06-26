@@ -39,7 +39,7 @@ export default function LoginPage() {
       // Step 2 — Fetch profile from public.users
       const { data: userData, error: userError } = await supabase
         .from("users")
-        .select("role, department, school, full_name")
+        .select("role, department, school, full_name, advisor_level")
         .eq("id", uid)
         .single();
 
