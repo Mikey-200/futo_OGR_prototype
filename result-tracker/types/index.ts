@@ -1,4 +1,5 @@
-export type UserRole = 'dean' | 'hod' | 'lecturer' | 'student';
+export type UserRole = 'hod' | 'course_advisor' | 'lecturer' | 'student';
+export type AdvisorLevel = 100 | 200 | 300 | 400 | 500;
 
 export type FutoSchool = 'SICT' | 'SEET' | 'SOES' | 'SOHT' | 'SAAT' | 'SMAT';
 export type FutoSemester = 'Harmattan' | 'Rain';
@@ -12,6 +13,7 @@ export interface User {
   school?: FutoSchool;
   department?: string;
   assigned_courses?: string[]; // Array of course codes for lecturers
+  advisor_level?: number;       // For course_advisor: the single level they manage (e.g. 400)
   created_at: string;
 }
 

@@ -7,8 +7,8 @@ import Sidebar from "@/components/Sidebar";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "FUTO Result Portal | SICT Academic Ledger",
-  description: "Federal University of Technology Owerri — SICT Academic Grade Portal",
+  title: "FUTO IFT Result Portal",
+  description: "Federal University of Technology Owerri — Department of Information Technology Academic Grade Portal",
 };
 
 export default async function RootLayout({
@@ -28,9 +28,10 @@ export default async function RootLayout({
 
     if (userData) {
       let fullName = userData.full_name || '';
-      let department = userData.department || '';
+      // This is an IFT-only prototype — department always defaults to IFT
+      let department = userData.department || 'IFT';
 
-      // For students: pull name + dept from students table if missing
+      // Students: pull name from students table
       if (userData.role === 'student') {
         const { data: studentData } = await supabase
           .from('students')
@@ -43,7 +44,7 @@ export default async function RootLayout({
         }
       }
 
-      // For lecturers: fetch allocated courses
+      // Lecturers: fetch their allocated courses for sidebar nav
       let allocations: any[] = [];
       if (userData.role === 'lecturer') {
         const { data: allocData } = await supabase
@@ -60,9 +61,10 @@ export default async function RootLayout({
         email: user.email || '',
         role: userData.role,
         full_name: fullName,
-        school: userData.school || '',
+        school: userData.school || 'SICT',
         department,
         assigned_courses: userData.assigned_courses || [],
+        advisor_level: userData.advisor_level ?? null, // number like 400, only for course_advisor
         allocations,
       };
     }

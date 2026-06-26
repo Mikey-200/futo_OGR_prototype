@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { createBrowserClient } from "@supabase/ssr";
 import {
   LayoutDashboard, Users, BookOpen, GraduationCap,
-  ChevronDown, ChevronRight, LogOut, Menu, X, BookMarked,
+  LogOut, Menu, X, BookMarked, ChevronDown, ChevronRight,
 } from "lucide-react";
 
 interface SidebarUser {
@@ -17,21 +17,19 @@ interface SidebarUser {
   school?: string;
   department?: string;
   assigned_courses?: string[];
+  advisor_level?: number | null; // course_advisor: 100/200/300/400/500
   allocations?: any[];
 }
 
-const SICT_DEPARTMENTS = [
-  { id: "IFT", label: "Information Technology" },
-  { id: "CSC", label: "Computer Science" },
-  { id: "CYB", label: "Cybersecurity" },
-  { id: "SOE", label: "Software Engineering" },
-];
+// IFT: 7 courses per semester, odd-numbered courses = Harmattan, even = Rain
+// Grouped by level for Course Advisor navigation
+const IFT_LEVEL_LINKS = [100, 200, 300, 400, 500];
 
 export default function Sidebar({ user }: { user: SidebarUser }) {
   const pathname = usePathname();
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
-  const [expandedDept, setExpandedDept] = useState<string | null>(null);
+  const [expandedLevel, setExpandedLevel] = useState<number | null>(null);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -48,16 +46,25 @@ export default function Sidebar({ user }: { user: SidebarUser }) {
 
   const getDisplayName = () => {
     if (!user.full_name) return user.email;
-    if (user.role === "student") {
-      return user.full_name.split(" ").slice(0, 2).join(" ");
-    }
+    if (user.role === "student") return user.full_name.split(" ").slice(0, 2).join(" ");
     return user.full_name;
   };
 
-  // ── Nav link component ──
-  const NavLink = ({ href, icon: Icon, label }: { href: string; icon: any; label: string }) => {
-    const isActive = pathname.startsWith(href) && href !== "/" ||
-      pathname === href;
+  const getRoleLabel = () => {
+    switch (user.role) {
+      case "hod": return "Head of Department";
+      case "course_advisor": return `${user.advisor_level ?? ""}L Course Advisor`;
+      case "lecturer": return "Staff / Lecturer";
+      case "student": return "Student";
+      default: return user.role;
+    }
+  };
+
+  // ── Shared NavLink ──────────────────────────────────────────────────────────
+  const NavLink = ({ href, icon: Icon, label, exact = false }: {
+    href: string; icon: any; label: string; exact?: boolean;
+  }) => {
+    const isActive = exact ? pathname === href : pathname.startsWith(href.split("?")[0]) && pathname !== "/";
     return (
       <Link
         href={href}
@@ -80,106 +87,158 @@ export default function Sidebar({ user }: { user: SidebarUser }) {
     </div>
   );
 
-  // ── Role-specific navigation ──
-  const DeanNav = () => (
+  // ── HOD Navigation ──────────────────────────────────────────────────────────
+  // Full access: IFT Department Matrix + Students Roster
+  const HODNav = () => (
     <div className="space-y-0.5">
-      <NavLink href="/admin" icon={LayoutDashboard} label="SICT Overview" />
-      <SectionLabel label="Departments" />
-      {SICT_DEPARTMENTS.map((dept) => (
-        <div key={dept.id}>
+      <NavLink href="/results?dept=IFT" icon={LayoutDashboard} label="IFT Department Matrix" />
+      <SectionLabel label="Levels" />
+      {IFT_LEVEL_LINKS.map((lvl) => (
+        <div key={lvl}>
           <div className={`flex items-center justify-between rounded-lg transition-all cursor-pointer ${
-            expandedDept === dept.id ? "bg-[#F1F5F9]" : "hover:bg-[#F8FAFC]"
+            expandedLevel === lvl ? "bg-[#F1F5F9]" : "hover:bg-[#F8FAFC]"
           }`}>
             <Link
-              href={`/results?dept=${dept.id}`}
+              href={`/results?dept=IFT&level=${lvl}L`}
               onClick={() => setIsOpen(false)}
               className="flex items-center gap-2.5 px-3 py-2 flex-1 text-[13px] font-semibold text-[#475569] hover:text-[#0F172A] transition-colors"
             >
               <BookOpen className="w-4 h-4 shrink-0 text-[#94A3B8]" />
-              <span className="font-bold">{dept.id}</span>
-              <span className="text-[#94A3B8] font-normal hidden xl:block truncate">— {dept.label}</span>
+              <span className="font-bold">{lvl}L</span>
+              <span className="text-[#94A3B8] font-normal text-[12px]"> — Year {lvl / 100}</span>
             </Link>
             <button
-              onClick={(e) => {
-                e.preventDefault();
-                setExpandedDept(expandedDept === dept.id ? null : dept.id);
-              }}
+              onClick={(e) => { e.preventDefault(); setExpandedLevel(expandedLevel === lvl ? null : lvl); }}
               className="px-2 py-2 text-[#CBD5E1] hover:text-[#64748B] transition-colors"
             >
-              {expandedDept === dept.id
-                ? <ChevronDown className="w-3.5 h-3.5" />
-                : <ChevronRight className="w-3.5 h-3.5" />}
+              {expandedLevel === lvl ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             </button>
           </div>
-          {expandedDept === dept.id && (
-            <div className="ml-4 pl-3 border-l-2 border-[#E2E8F0] my-1">
+          {expandedLevel === lvl && (
+            <div className="ml-4 pl-3 border-l-2 border-[#E2E8F0] my-1 space-y-0.5">
               <Link
-                href={`/students?dept=${dept.id}`}
+                href={`/students?dept=IFT&level=${lvl}`}
                 onClick={() => setIsOpen(false)}
                 className="flex items-center gap-2 py-1.5 px-2 text-[12px] font-semibold text-[#64748B] hover:text-[#15803D] transition-colors rounded"
               >
                 <Users className="w-3.5 h-3.5" />
-                <span>Students Roster</span>
+                <span>{lvl}L Roster</span>
               </Link>
             </div>
           )}
         </div>
       ))}
+      <SectionLabel label="Administration" />
+      <NavLink href="/students?dept=IFT" icon={Users} label="Full Students Roster" />
     </div>
   );
 
-  const HODNav = () => (
-    <div className="space-y-0.5">
-      <NavLink href={`/results?dept=${user.department || "IFT"}`} icon={LayoutDashboard} label="Result Matrix" />
-      <SectionLabel label="Department" />
-      <NavLink href={`/results?dept=${user.department || "IFT"}`} icon={BookOpen} label={`${user.department || "Dept"} Ledger`} />
-      <NavLink href={`/students?dept=${user.department || "IFT"}`} icon={Users} label="Students Roster" />
-    </div>
-  );
-
-  const LecturerNav = () => {
-    const courses = user.allocations || [];
-    const depts = Array.from(new Set(courses.map((c: any) => c.department).filter(Boolean))) as string[];
+  // ── Course Advisor Navigation ────────────────────────────────────────────────
+  // Scoped strictly to their single assigned level (e.g. 400L)
+  const AdvisorNav = () => {
+    const advisorLevel = user.advisor_level;
+    if (!advisorLevel) {
+      return (
+        <p className="px-3 py-2 text-[12px] text-[#94A3B8] italic">
+          No advisory level assigned.
+        </p>
+      );
+    }
     return (
       <div className="space-y-0.5">
-        <NavLink href={`/results?dept=${depts[0] || "IFT"}`} icon={LayoutDashboard} label="Faculty Desk" />
-        <SectionLabel label="Assigned Modules" />
-        {courses.length === 0
-          ? <p className="px-3 py-2 text-[12px] text-[#94A3B8] italic">No allocations assigned</p>
-          : courses.map((c: any) => (
+        <NavLink
+          href={`/results?dept=IFT&level=${advisorLevel}L&semester=Harmattan`}
+          icon={LayoutDashboard}
+          label={`${advisorLevel}L Result Matrix`}
+        />
+        <SectionLabel label={`${advisorLevel}L Modules`} />
+        <NavLink
+          href={`/results?dept=IFT&level=${advisorLevel}L&semester=Harmattan`}
+          icon={BookOpen}
+          label="Harmattan Semester"
+        />
+        <NavLink
+          href={`/results?dept=IFT&level=${advisorLevel}L&semester=Rain`}
+          icon={BookOpen}
+          label="Rain Semester"
+        />
+        <SectionLabel label="Roster" />
+        <NavLink
+          href={`/students?dept=IFT&level=${advisorLevel}`}
+          icon={Users}
+          label={`${advisorLevel}L Students`}
+        />
+      </div>
+    );
+  };
+
+  // ── Lecturer (Staff) Navigation ──────────────────────────────────────────────
+  // Strictly shows only their allocated course codes
+  const LecturerNav = () => {
+    const courses = user.allocations || [];
+    const harmattan = courses.filter((c: any) => c.semester === "Harmattan");
+    const rain = courses.filter((c: any) => c.semester === "Rain");
+
+    return (
+      <div className="space-y-0.5">
+        <NavLink
+          href={`/results?dept=IFT`}
+          icon={LayoutDashboard}
+          label="Faculty Desk"
+        />
+        {harmattan.length > 0 && (
+          <>
+            <SectionLabel label="Harmattan Allocations" />
+            {harmattan.map((c: any) => (
               <NavLink
                 key={c.id}
-                href={`/results?dept=${c.department}&course=${c.course_code}&level=${c.level}L&semester=${c.semester}`}
+                href={`/results?dept=IFT&course=${c.course_code}&level=${c.level}L&semester=Harmattan`}
                 icon={BookOpen}
-                label={c.course_code}
+                label={`${c.course_code}`}
               />
-            ))
-        }
-        {depts.length > 0 && (
-          <>
-            <SectionLabel label="Roster" />
-            {depts.map((d) => (
-              <NavLink key={d} href={`/students?dept=${d}`} icon={Users} label={`${d} Roster`} />
             ))}
           </>
+        )}
+        {rain.length > 0 && (
+          <>
+            <SectionLabel label="Rain Allocations" />
+            {rain.map((c: any) => (
+              <NavLink
+                key={c.id}
+                href={`/results?dept=IFT&course=${c.course_code}&level=${c.level}L&semester=Rain`}
+                icon={BookOpen}
+                label={`${c.course_code}`}
+              />
+            ))}
+          </>
+        )}
+        {courses.length === 0 && (
+          <p className="px-3 py-2 text-[12px] text-[#94A3B8] italic">
+            No course allocations assigned.
+          </p>
         )}
       </div>
     );
   };
 
+  // ── Student Navigation ───────────────────────────────────────────────────────
   const StudentNav = () => (
     <div className="space-y-0.5">
-      <NavLink href="/student" icon={GraduationCap} label="My Academic Ledger" />
+      <NavLink href="/student" icon={GraduationCap} label="My Academic Ledger" exact />
     </div>
   );
 
   const renderNav = () => {
     switch (user.role) {
-      case "dean": return <DeanNav />;
       case "hod": return <HODNav />;
+      case "course_advisor": return <AdvisorNav />;
       case "lecturer": return <LecturerNav />;
       case "student": return <StudentNav />;
-      default: return null;
+      default: return (
+        <p className="px-3 py-2 text-[12px] text-rose-400 italic">
+          Unknown role: {user.role}
+        </p>
+      );
     }
   };
 
@@ -189,11 +248,11 @@ export default function Sidebar({ user }: { user: SidebarUser }) {
       <div className="px-5 py-5 border-b border-[#E2E8F0]">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 bg-[#15803D] rounded-xl flex items-center justify-center shadow-sm shrink-0">
-            <BookMarked className="w-4.5 h-4.5 text-white" />
+            <BookMarked className="w-4 h-4 text-white" />
           </div>
           <div>
-            <div className="text-[13px] font-black tracking-wide text-[#0F172A] leading-tight">FUTO Portal</div>
-            <div className="text-[10px] font-bold text-[#15803D] tracking-widest uppercase">SICT Ledger Core</div>
+            <div className="text-[13px] font-black tracking-wide text-[#0F172A] leading-tight">FUTO IFT Portal</div>
+            <div className="text-[10px] font-bold text-[#15803D] tracking-widest uppercase">Result Ledger System</div>
           </div>
         </div>
       </div>
@@ -206,13 +265,8 @@ export default function Sidebar({ user }: { user: SidebarUser }) {
           </p>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="text-[9px] font-black uppercase tracking-widest bg-[#15803D] text-white px-1.5 py-0.5 rounded">
-              {user.role}
+              {getRoleLabel()}
             </span>
-            {(user.department || user.school) && (
-              <span className="text-[11px] font-medium text-[#64748B] truncate">
-                {user.department || user.school}
-              </span>
-            )}
           </div>
         </div>
       </div>
@@ -241,7 +295,7 @@ export default function Sidebar({ user }: { user: SidebarUser }) {
           <div className="w-7 h-7 bg-[#15803D] rounded-lg flex items-center justify-center">
             <BookMarked className="w-3.5 h-3.5 text-white" />
           </div>
-          <span className="text-[14px] font-black text-[#0F172A]">FUTO Portal</span>
+          <span className="text-[14px] font-black text-[#0F172A]">FUTO IFT Portal</span>
         </div>
         <button
           onClick={() => setIsOpen(!isOpen)}
@@ -271,7 +325,7 @@ export default function Sidebar({ user }: { user: SidebarUser }) {
         <SidebarBody />
       </aside>
 
-      {/* Mobile spacer for top bar */}
+      {/* Mobile spacer */}
       <div className="md:hidden h-[52px] shrink-0" />
     </>
   );

@@ -110,9 +110,8 @@ function ReleaseModal({ onConfirm, onCancel, isLoading }: {
 // ── Main Component ─────────────────────────────────────────────────────────────
 export default function ResultsMatrix() {
   const searchParams = useSearchParams();
-  const rawDept = searchParams.get("dept") || "";
   const initCourse = searchParams.get("course") || "";
-  const initLevel = searchParams.get("level") || "500L";
+  const initLevel = searchParams.get("level") || "400L";
   const initSemester = searchParams.get("semester") || "Harmattan";
 
   // Auth
@@ -121,8 +120,10 @@ export default function ResultsMatrix() {
   const [userEmail, setUserEmail] = useState("");
   const [isAuthResolved, setIsAuthResolved] = useState(false);
   const [allocatedData, setAllocatedData] = useState<any[]>([]);
+  const [advisorLevel, setAdvisorLevel] = useState<number | null>(null);
 
-  const dept = userRole === "hod" && !rawDept ? "IFT" : rawDept;
+  // Department is ALWAYS IFT for this prototype
+  const dept = "IFT";
 
   // Params
   const [level, setLevel] = useState(initLevel);
@@ -161,9 +162,14 @@ export default function ResultsMatrix() {
       if (s?.user) {
         setUserId(s.user.id);
         setUserEmail(s.user.email || "");
-        const { data } = await supabase.from("users").select("role").eq("id", s.user.id).single();
+        const { data } = await supabase
+          .from("users")
+          .select("role, advisor_level")
+          .eq("id", s.user.id)
+          .single();
         const role = data?.role || "student";
         setUserRole(role);
+        if (data?.advisor_level) setAdvisorLevel(data.advisor_level);
         if (role === "lecturer") {
           const { data: alloc } = await supabase
             .from("lecturer_allocations")
@@ -177,25 +183,29 @@ export default function ResultsMatrix() {
     resolve();
   }, []);
 
-  // ── Course fetch ──
+  // ── Course fetch — IFT 7-course structure per semester ──
   useEffect(() => {
-    if (!isAuthResolved || !dept) return;
+    if (!isAuthResolved) return;
     const fetch = async () => {
       setIsLoadingCourses(true);
       const lvlNum = parseInt(level.replace("L", ""));
       let courses: any[] = [];
 
       if (userRole === "lecturer" && allocatedData.length > 0) {
+        // Lecturer: only their exact allocated courses for this level+semester
         courses = allocatedData.filter(
           (c: any) => c.department === dept && c.level === lvlNum && c.semester === semester
         );
-      } else if (userRole !== "lecturer") {
+      } else {
+        // HOD, course_advisor, student: fetch all courses for this level+semester
+        // IFT convention: Harmattan = odd-numbered courses, Rain = even-numbered
         const { data } = await supabase
           .from("courses")
           .select("*")
           .eq("department", dept)
           .eq("level", lvlNum)
-          .eq("semester", semester);
+          .eq("semester", semester)
+          .order("course_code");
         if (data) courses = data;
       }
 
@@ -388,17 +398,27 @@ export default function ResultsMatrix() {
     URL.revokeObjectURL(url);
   };
 
-  const levelOptions = userRole === "lecturer" && allocatedData.length > 0
-    ? Array.from(new Set(allocatedData.filter((c) => c.department === dept).map((c) => `${c.level}L`)))
-    : ["100L", "200L", "300L", "400L", "500L"];
+  // Level selector options — advisor locked to their single level
+  const levelOptions = (() => {
+    if (userRole === "course_advisor" && advisorLevel) {
+      return [`${advisorLevel}L`]; // advisor sees only their level
+    }
+    if (userRole === "lecturer" && allocatedData.length > 0) {
+      return Array.from(new Set(allocatedData.filter((c) => c.department === dept).map((c) => `${c.level}L`)));
+    }
+    return ["100L", "200L", "300L", "400L", "500L"];
+  })();
 
-  const semesterOptions = userRole === "lecturer" && allocatedData.length > 0
-    ? Array.from(new Set(
+  const semesterOptions = (() => {
+    if (userRole === "lecturer" && allocatedData.length > 0) {
+      return Array.from(new Set(
         allocatedData
           .filter((c) => c.department === dept && c.level === parseInt(level.replace("L", "")))
           .map((c) => c.semester)
-      ))
-    : ["Harmattan", "Rain"];
+      ));
+    }
+    return ["Harmattan", "Rain"];
+  })();
 
   const gradeBadge = (g: string) => {
     if (g === "A") return "bg-[#DCFCE7] text-[#15803D] border-[#86EFAC]";
@@ -431,7 +451,12 @@ export default function ResultsMatrix() {
       <div className="shrink-0 bg-white border-b border-[#E2E8F0] px-5 py-4 flex flex-col gap-4 shadow-sm no-print" style={{ minHeight: "25%" }}>
         <div>
           <h2 className="text-[15px] font-black text-[#0F172A] tracking-tight">
-            {dept || "—"} Result Matrix
+            IFT Result Matrix
+            {userRole === "course_advisor" && advisorLevel && (
+              <span className="ml-2 text-[12px] font-bold text-[#15803D] bg-[#DCFCE7] px-2 py-0.5 rounded-full">
+                {advisorLevel}L Advisor
+              </span>
+            )}
           </h2>
           <p className="text-[11px] font-bold uppercase tracking-widest text-[#94A3B8] mt-0.5">
             Parameter Selection — {level} · {semester} · {session}
@@ -440,7 +465,15 @@ export default function ResultsMatrix() {
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
-            <Select value={level} onChange={setLevel} disabled={userRole === "lecturer" && allocatedData.length === 0}>
+            {/* Level: locked for course_advisor and un-allocated lecturers */}
+            <Select
+              value={level}
+              onChange={setLevel}
+              disabled={
+                (userRole === "course_advisor" && !!advisorLevel) ||
+                (userRole === "lecturer" && allocatedData.length === 0)
+              }
+            >
               {levelOptions.map((l) => <option key={l} value={l}>{l}</option>)}
             </Select>
 
@@ -449,15 +482,30 @@ export default function ResultsMatrix() {
             </Select>
 
             {isStaff && (
-              <Select value={courseCode} onChange={setCourseCode} disabled={hasNoCourses}>
-                {isLoadingCourses
-                  ? <option value="">Loading...</option>
-                  : hasNoCourses
-                  ? <option value="">Not available</option>
-                  : availableCourses.map((c) => (
-                      <option key={c.id} value={c.course_code}>{c.course_code}</option>
-                    ))
-                }
+              <Select
+                value={courseCode}
+                onChange={setCourseCode}
+                disabled={hasNoCourses}
+              >
+                {isLoadingCourses ? (
+                  <option value="">Loading courses...</option>
+                ) : hasNoCourses ? (
+                  <option value="">Not available</option>
+                ) : (
+                  /*
+                   * IFT 7-course structure:
+                   * Harmattan semester → odd-numbered courses (IFT401, IFT403, …)
+                   * Rain semester      → even-numbered courses (IFT402, IFT404, …)
+                   * Group them clearly so the user sees the pattern at a glance.
+                   */
+                  <optgroup label={`${level} — ${semester} Semester (${availableCourses.length} Courses)`}>
+                    {availableCourses.map((c) => (
+                      <option key={c.id} value={c.course_code}>
+                        {c.course_code}{c.title ? ` — ${c.title}` : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </Select>
             )}
 

@@ -52,23 +52,20 @@ export default function LoginPage() {
       }
 
       // Step 3 — Enrich profile based on role
-      let dept = userData.department || "";
       let firstCourse: any = null;
 
       if (userData.role === "student") {
-        // Pull dept from students table if missing
+        // Pull dept from students table to confirm
         const { data: studentData } = await supabase
           .from("students")
           .select("department, current_level")
           .eq("profile_id", uid)
           .single();
-        if (studentData) {
-          dept = studentData.department;
-        }
+        // (dept stays IFT for this prototype)
       }
 
       if (userData.role === "lecturer") {
-        // Fetch first allocation for smart redirect
+        // Smart redirect to first allocated course
         const { data: allocations } = await supabase
           .from("lecturer_allocations")
           .select("courses(department, course_code, level, semester)")
@@ -79,23 +76,30 @@ export default function LoginPage() {
         }
       }
 
-      // Step 4 — Navigate based on DB role (not the UI dropdown)
+      // Step 4 — Navigate based on DB role (ignores UI dropdown)
       router.refresh();
 
       switch (userData.role) {
-        case "dean":
-          router.push("/admin");
-          break;
         case "hod":
-          router.push(`/results?dept=${dept || "IFT"}`);
+          router.push("/results?dept=IFT");
           break;
+        case "course_advisor": {
+          // Advisor scoped to their level — redirect straight to that level
+          const advisorLevel = userData.advisor_level;
+          router.push(
+            advisorLevel
+              ? `/results?dept=IFT&level=${advisorLevel}L&semester=Harmattan`
+              : "/results?dept=IFT"
+          );
+          break;
+        }
         case "lecturer":
           if (firstCourse) {
             router.push(
-              `/results?dept=${firstCourse.department}&course=${firstCourse.course_code}&level=${firstCourse.level}L&semester=${firstCourse.semester}`
+              `/results?dept=IFT&course=${firstCourse.course_code}&level=${firstCourse.level}L&semester=${firstCourse.semester}`
             );
           } else {
-            router.push("/results");
+            router.push("/results?dept=IFT");
           }
           break;
         case "student":
@@ -112,8 +116,8 @@ export default function LoginPage() {
   };
 
   const placeholders: Record<UserRole, string> = {
-    dean: "dean.sict@futo.edu.ng",
     hod: "hod.ift@futo.edu.ng",
+    course_advisor: "advisor.400l@futo.edu.ng",
     lecturer: "lecturer.name@futo.edu.ng",
     student: "20201234567@futo.edu.ng",
   };
@@ -166,11 +170,11 @@ export default function LoginPage() {
           {/* Mobile logo */}
           <div className="lg:hidden flex items-center gap-3 mb-2">
             <div className="w-9 h-9 bg-[#15803D] rounded-xl flex items-center justify-center shadow-sm">
-              <BookMarked className="w-4.5 h-4.5 text-white" />
+              <BookMarked className="w-4 h-4 text-white" />
             </div>
             <div>
-              <div className="text-[13px] font-black text-[#0F172A]">FUTO Portal</div>
-              <div className="text-[10px] font-bold text-[#15803D] uppercase tracking-widest">SICT Ledger</div>
+              <div className="text-[13px] font-black text-[#0F172A]">FUTO IFT Portal</div>
+              <div className="text-[10px] font-bold text-[#15803D] uppercase tracking-widest">IFT Result Ledger</div>
             </div>
           </div>
 
@@ -199,9 +203,9 @@ export default function LoginPage() {
                 className="w-full bg-white border border-[#E2E8F0] text-[13px] font-semibold text-[#0F172A] rounded-xl px-4 py-3 outline-none focus:border-[#15803D] focus:ring-2 focus:ring-[#15803D]/10 transition-all cursor-pointer appearance-none shadow-sm"
               >
                 <option value="student">Student — Ledger Access</option>
-                <option value="lecturer">Lecturer / Faculty</option>
+                <option value="lecturer">Lecturer / Staff</option>
+                <option value="course_advisor">Course Advisor</option>
                 <option value="hod">Head of Department (HOD)</option>
-                <option value="dean">Dean of School</option>
               </select>
             </div>
 
