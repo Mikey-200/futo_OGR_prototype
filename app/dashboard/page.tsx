@@ -18,7 +18,7 @@ type Pane = "results" | "registry" | "student_view";
 
 interface Course {
   id: string;
-  code: string;
+  course_code: string;
   title: string;
   level: number;
   department: string;
@@ -74,7 +74,7 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Safe parsing for level drop-down
-  const parsedLevel = parseInt(level.toString().replace(/\D/g, ''), 10) || 500;
+  const parsedLevel = parseInt(level.toString().replace('L', ''), 10) || 500;
 
   // Fetch Courses
   useEffect(() => {
@@ -208,13 +208,17 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
   };
 
   const handleBulkSave = async () => {
-    if (!activeCourseId) return;
+    if (!activeCourseId) {
+      toast.error("Please select a valid course code before saving changes.");
+      return;
+    }
     setIsDataLoading(true);
     
     const payload = resultsUI.map(student => ({
       student_id: student.profile_id,
       course_id: activeCourseId,
       academic_year: session,
+      semester: semester,
       ca_score: student.ca_score,
       exam_score: student.exam_score,
       total_score: student.total_score,
@@ -333,32 +337,32 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">PARAMETER SELECTION</p>
       </div>
 
-      <div className="flex-none px-8 pb-6 flex items-center justify-between border-b border-gray-100 flex-wrap gap-4">
-        <div className="flex items-center gap-3">
-          <select value={level} onChange={e => setLevel(e.target.value)} className="px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm font-semibold text-gray-700 outline-none focus:border-[#105e2e] focus:ring-1 focus:ring-[#105e2e]">
+      <div className="flex-none px-4 sm:px-8 pb-4 sm:pb-6 flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 gap-4">
+        <div className="grid grid-cols-2 gap-2 md:flex md:flex-row md:items-center md:space-x-3">
+          <select value={level} onChange={e => setLevel(e.target.value)} className="w-full md:w-auto px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm font-semibold text-gray-700 outline-none focus:border-[#105e2e] focus:ring-1 focus:ring-[#105e2e]">
             {[100, 200, 300, 400, 500].map(l => <option key={l} value={l}>{l}L</option>)}
           </select>
-          <select value={semester} onChange={e => setSemester(e.target.value)} className="px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm font-semibold text-gray-700 outline-none focus:border-[#105e2e] focus:ring-1 focus:ring-[#105e2e]">
+          <select value={semester} onChange={e => setSemester(e.target.value)} className="w-full md:w-auto px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm font-semibold text-gray-700 outline-none focus:border-[#105e2e] focus:ring-1 focus:ring-[#105e2e]">
             <option value="Harmattan">Harmattan</option>
             <option value="Rain">Rain</option>
           </select>
-          <select value={activeCourseId} onChange={e => setActiveCourseId(e.target.value)} disabled={isCoursesLoading} className="px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm font-semibold text-gray-700 outline-none focus:border-[#105e2e] focus:ring-1 focus:ring-[#105e2e] disabled:bg-gray-50 min-w-[120px]">
+          <select value={activeCourseId} onChange={e => setActiveCourseId(e.target.value)} disabled={isCoursesLoading} className="w-full md:w-auto px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm font-semibold text-gray-700 outline-none focus:border-[#105e2e] focus:ring-1 focus:ring-[#105e2e] disabled:bg-gray-50 min-w-[120px]">
             {isCoursesLoading && <option>Loading...</option>}
             {!isCoursesLoading && courses.length === 0 && <option value="">Not available</option>}
-            {!isCoursesLoading && courses.map(c => <option key={c.id} value={c.id}>{c.code}</option>)}
+            {!isCoursesLoading && courses.map(c => <option key={c.id} value={c.id}>{c.course_code} - {c.title}</option>)}
           </select>
-          <select value={session} onChange={e => setSession(e.target.value)} className="px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm font-semibold text-gray-700 outline-none focus:border-[#105e2e] focus:ring-1 focus:ring-[#105e2e]">
+          <select value={session} onChange={e => setSession(e.target.value)} className="w-full md:w-auto px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm font-semibold text-gray-700 outline-none focus:border-[#105e2e] focus:ring-1 focus:ring-[#105e2e]">
             {["2025/2026", "2024/2025", "2023/2024"].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
         
         {(role === "hod" || role === "lecturer") && (
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4 mt-2 sm:mt-0">
             <input type="file" accept=".csv" ref={fileInputRef} onChange={handleCSVUpload} className="hidden" />
-            <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 text-sm font-bold text-gray-400 hover:text-gray-700 transition-colors">
+            <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-400 hover:text-gray-700 transition-colors px-2 sm:px-0">
               <UploadCloud className="w-4 h-4" /> Upload File
             </button>
-            <button onClick={() => isEditMode ? handleBulkSave() : setIsEditMode(true)} className={`flex items-center gap-2 text-sm font-bold px-4 py-2 rounded-lg transition-all ${isEditMode ? "bg-[#105e2e] text-white shadow-md" : "text-gray-400 hover:text-gray-700 hover:bg-gray-50"}`}>
+            <button onClick={() => isEditMode ? handleBulkSave() : setIsEditMode(true)} className={`flex items-center gap-2 text-xs sm:text-sm font-bold px-3 sm:px-4 py-2 rounded-lg transition-all ${isEditMode ? "bg-[#105e2e] text-white shadow-md" : "text-gray-400 hover:text-gray-700 hover:bg-gray-50 border border-gray-200 sm:border-transparent"}`}>
               {isEditMode ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
               {isEditMode ? "Save Metrics Layout" : "Edit Matrix"}
             </button>
@@ -366,7 +370,7 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
         )}
       </div>
 
-      <div className="flex-1 overflow-auto bg-white relative p-8">
+      <div className="flex-1 w-full overflow-x-auto scrollbar-thin bg-white relative p-4 sm:p-8">
         {isDataLoading && <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-40"><Loader2 className="w-8 h-8 animate-spin text-[#105e2e]" /></div>}
         
         {hasNoData && !isDataLoading ? (
@@ -382,8 +386,8 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
           <table className="w-full text-sm text-left whitespace-nowrap">
             <thead className="text-gray-400 uppercase text-[10px] tracking-wider font-extrabold pb-4 border-b border-gray-100">
               <tr>
-                <th className="px-2 py-3">Student Name</th>
-                <th className="px-2 py-3">Reg. Number</th>
+                <th className="px-2 py-3 sticky left-0 bg-white z-20 min-w-[140px] shadow-[1px_0_0_0_#f3f4f6]">Student Name</th>
+                <th className="px-2 py-3 sticky left-[140px] bg-white z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[120px]">Reg. Number</th>
                 <th className="px-2 py-3 text-center">CA</th>
                 <th className="px-2 py-3 text-center">Exam</th>
                 <th className="px-2 py-3 text-center">Total</th>
@@ -394,8 +398,8 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
             <tbody className="divide-y divide-gray-50">
               {resultsUI.map((student) => (
                 <tr key={student.profile_id} className="hover:bg-gray-50/50 transition-colors">
-                  <td className="px-2 py-4 font-bold text-gray-800">{student.full_name}</td>
-                  <td className="px-2 py-4 text-gray-500 font-mono text-xs font-semibold">{student.reg_number}</td>
+                  <td className="px-2 py-4 font-bold text-gray-800 sticky left-0 bg-white z-20 shadow-[1px_0_0_0_#f3f4f6] truncate max-w-[140px] min-w-[140px]">{student.full_name}</td>
+                  <td className="px-2 py-4 text-gray-500 font-mono text-xs font-semibold sticky left-[140px] bg-white z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[120px]">{student.reg_number}</td>
                   <td className="px-2 py-4 text-center">
                     {isEditMode ? (
                       <input type="number" value={student.ca_score ?? ""} onChange={e => handleCellChange(student.profile_id, "ca_score", e.target.value)} className="w-16 p-1.5 text-center border border-gray-200 rounded-md focus:ring-2 focus:ring-[#105e2e] outline-none text-sm font-semibold" max={40} min={0} />
@@ -418,18 +422,18 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
         )}
       </div>
 
-      <div className="flex-none bg-white p-6 flex items-center justify-between border-t border-gray-100">
-        <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 hover:bg-gray-100 rounded-lg text-gray-500 font-bold text-xs tracking-wide uppercase transition-colors">
+      <div className="flex-none flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 p-3 sm:p-4 bg-gray-50 border-t border-gray-100 z-30">
+        <button onClick={() => window.print()} className="w-full sm:w-auto flex items-center justify-center gap-2 py-2.5 px-3 sm:px-4 bg-white sm:bg-transparent border sm:border-0 border-gray-200 hover:bg-gray-100 rounded-lg text-gray-600 sm:text-gray-500 font-bold text-xs sm:text-sm tracking-wide uppercase transition-colors">
           <Printer className="w-4 h-4"/> Print Document
         </button>
         
         {(role === "hod" || role === "lecturer") && (
-          <button onClick={() => setShowPasswordOverlay(true)} disabled={hasNoData || !activeCourseId} className="flex items-center gap-2 px-10 py-3 bg-[#4f46e5] hover:bg-[#4338ca] text-white rounded-lg font-bold text-sm shadow-md shadow-indigo-500/20 disabled:opacity-50 transition-all">
+          <button onClick={() => setShowPasswordOverlay(true)} disabled={hasNoData || !activeCourseId} className="w-full sm:w-auto flex items-center justify-center gap-2 py-2.5 px-3 sm:px-10 bg-[#4f46e5] hover:bg-[#4338ca] text-white rounded-lg font-bold text-xs sm:text-sm shadow-md shadow-indigo-500/20 disabled:opacity-50 transition-all">
             <Lock className="w-4 h-4" /> RELEASE RESULTS
           </button>
         )}
         
-        <button onClick={() => toast.success("Exporting CSV...")} className="flex items-center gap-2 px-4 py-2.5 bg-green-50 hover:bg-green-100 rounded-lg text-[#105e2e] font-bold text-xs tracking-wide uppercase transition-colors">
+        <button onClick={() => toast.success("Exporting CSV...")} className="w-full sm:w-auto flex items-center justify-center gap-2 py-2.5 px-3 sm:px-4 bg-green-50 hover:bg-green-100 rounded-lg text-[#105e2e] font-bold text-xs sm:text-sm tracking-wide uppercase transition-colors">
           <Download className="w-4 h-4"/> Export .xlsx
         </button>
       </div>
@@ -460,7 +464,7 @@ const StudentRegistryPane = ({ supabase }: { supabase: any }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
 
-  const parsedLevel = parseInt(level.toString().replace(/\D/g, ''), 10) || 500;
+  const parsedLevel = parseInt(level.toString().replace('L', ''), 10) || 500;
 
   useEffect(() => {
     const fetchStudents = async () => {
@@ -601,7 +605,7 @@ const StudentPerformancePane = ({ supabase, userProfileId }: { supabase: any, us
   const [isLoading, setIsLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
 
-  const parsedLevel = parseInt(level.toString().replace(/\D/g, ''), 10) || 500;
+  const parsedLevel = parseInt(level.toString().replace('L', ''), 10) || 500;
 
   useEffect(() => {
     const fetchStudentResults = async () => {
@@ -615,7 +619,7 @@ const StudentPerformancePane = ({ supabase, userProfileId }: { supabase: any, us
 
         const { data: cData, error: cError } = await supabase
           .from("courses")
-          .select("id, code, title")
+          .select("id, course_code, title")
           .eq("level", parsedLevel)
           .eq("semester", semester)
           .eq("department", DEPARTMENT);
@@ -656,7 +660,7 @@ const StudentPerformancePane = ({ supabase, userProfileId }: { supabase: any, us
           const uiData = cData.map((c: any) => {
             const res = (rData || []).find((r: any) => r.course_id === c.id);
             return {
-              courseCode: c.code,
+              courseCode: c.course_code,
               courseTitle: c.title,
               ca_score: res?.ca_score ?? 0,
               exam_score: res?.exam_score ?? 0,
