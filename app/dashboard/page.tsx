@@ -6,7 +6,7 @@ import toast, { Toaster } from "react-hot-toast";
 import { 
   UploadCloud, Printer, Download, CheckCircle, Lock, Loader2, 
   Menu, X, LogOut, Users, BookOpen, GraduationCap, Building2,
-  Save, Edit3, AlertTriangle, EyeOff, ChevronRight
+  Save, Edit3, AlertTriangle, EyeOff, ChevronRight, Info
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { createClient } from "@/utils/supabase";
@@ -200,7 +200,8 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
           exam_score: updatedExam, 
           total_score: total, 
           letter_grade, 
-          grade_point 
+          grade_point,
+          is_released: false
         };
       }
       return student;
@@ -329,6 +330,7 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
   };
 
   const hasNoData = !isDataLoading && resultsUI.length === 0;
+  const allReleased = resultsUI.length > 0 && resultsUI.every(r => r.is_released);
 
   return (
     <div className="h-full flex flex-col bg-white text-gray-900">
@@ -428,8 +430,16 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
         </button>
         
         {(role === "hod" || role === "lecturer") && (
-          <button onClick={() => setShowPasswordOverlay(true)} disabled={hasNoData || !activeCourseId} className="w-full sm:w-auto flex items-center justify-center gap-2 py-2.5 px-3 sm:px-10 bg-[#4f46e5] hover:bg-[#4338ca] text-white rounded-lg font-bold text-xs sm:text-sm shadow-md shadow-indigo-500/20 disabled:opacity-50 transition-all">
-            <Lock className="w-4 h-4" /> RELEASE RESULTS
+          <button 
+            onClick={() => setShowPasswordOverlay(true)} 
+            disabled={hasNoData || !activeCourseId || allReleased} 
+            className={`w-full sm:w-auto flex items-center justify-center gap-2 py-2.5 px-3 sm:px-10 text-white rounded-lg font-bold text-xs sm:text-sm shadow-md transition-all ${
+              allReleased 
+                ? "bg-gray-400 cursor-not-allowed shadow-none" 
+                : "bg-[#105e2e] hover:bg-[#0d4a25] shadow-green-900/20"
+            }`}
+          >
+            <Lock className="w-4 h-4" /> {allReleased ? "RELEASED" : "RELEASE RESULTS"}
           </button>
         )}
         
@@ -652,8 +662,9 @@ const StudentPerformancePane = ({ supabase, userProfileId }: { supabase: any, us
         }
         
         const unreleasedExists = rData?.some((r: any) => r.is_released === false);
+        const missingResults = cData.some((c: any) => !rData?.find((r: any) => r.course_id === c.id));
         
-        if (unreleasedExists) {
+        if (unreleasedExists || missingResults) {
           setIsLocked(true);
           setResults([]);
         } else {
@@ -708,10 +719,10 @@ const StudentPerformancePane = ({ supabase, userProfileId }: { supabase: any, us
         ) : isLocked ? (
           <div className="h-full flex flex-col items-center justify-center text-center">
             <div className="w-16 h-16 bg-gray-50 text-gray-300 rounded-2xl flex items-center justify-center mb-6 border border-gray-100 shadow-sm">
-              <EyeOff className="w-8 h-8" />
+              <Info className="w-8 h-8" />
             </div>
             <p className="text-gray-400 font-medium text-sm max-w-[280px]">
-              Your results for this semester are currently pending departmental release.
+              Results for the {semester} semester of {parsedLevel}L are not available yet.
             </p>
           </div>
         ) : (
