@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#15803d" />
+      <stop offset="100%" stop-color="#0d4a24" />
+    </linearGradient>
+  </defs>
+  <!-- Rounded Shield / Base -->
+  <rect width="32" height="32" rx="7" fill="url(#emeraldGrad)"/>
+  <!-- Institutional Book/Portal Icon -->
+  <path d="M7 10.5C7 9.67 7.67 9 8.5 9H14.5C15.33 9 16 9.67 16 10.5V22.5C16 21.67 15.33 21 14.5 21H8.5C7.67 21 7 21.67 7 22.5V10.5Z" fill="#ffffff" opacity="0.95"/>
+  <path d="M25 10.5C25 9.67 24.33 9 23.5 9H17.5C16.67 9 16 9.67 16 10.5V22.5C16 21.67 16.67 21 17.5 21H23.5C24.33 21 25 21.67 25 22.5V10.5Z" fill="#ffffff" opacity="0.95"/>
+  <!-- Gold Accent Lines / Page detail -->
+  <line x1="9.5" y1="12" x2="13.5" y2="12" stroke="#eab308" stroke-width="1.2" stroke-linecap="round"/>
+  <line x1="9.5" y1="15" x2="13.5" y2="15" stroke="#15803d" stroke-width="1.2" stroke-linecap="round"/>
+  <line x1="9.5" y1="18" x2="12" y2="18" stroke="#15803d" stroke-width="1.2" stroke-linecap="round"/>
+  <line x1="18.5" y1="12" x2="22.5" y2="12" stroke="#eab308" stroke-width="1.2" stroke-linecap="round"/>
+  <line x1="18.5" y1="15" x2="22.5" y2="15" stroke="#15803d" stroke-width="1.2" stroke-linecap="round"/>
+  <line x1="18.5" y1="18" x2="21" y2="18" stroke="#15803d" stroke-width="1.2" stroke-linecap="round"/>
+  <circle cx="16" cy="6" r="1.5" fill="#eab308"/>
+</svg>

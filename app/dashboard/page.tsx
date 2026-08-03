@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import toast, { Toaster } from "react-hot-toast";
 import { 
@@ -58,7 +58,7 @@ const DEPARTMENT = "IFT";
 const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => {
   const [level, setLevel] = useState<number | string>(500);
   const [semester, setSemester] = useState("Harmattan");
-  const [session, setSession] = useState("2023/2024");
+  const [session, setSession] = useState("2025/2026");
   const [courses, setCourses] = useState<Course[]>([]);
   const [activeCourseId, setActiveCourseId] = useState<string>("");
   
@@ -112,64 +112,65 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
   }, [parsedLevel, semester, supabase]);
 
   // Fetch Spreadsheet Data
-  useEffect(() => {
-    const fetchSpreadsheetData = async () => {
-      if (!activeCourseId || !session) {
-        setResultsUI([]);
-        return;
+  const fetchSpreadsheetData = useCallback(async () => {
+    if (!activeCourseId || !session) {
+      setResultsUI([]);
+      return;
+    }
+    setIsDataLoading(true);
+    try {
+      const { data: studentsData, error: studentsError } = await supabase
+        .from("students")
+        .select("*")
+        .eq("department", DEPARTMENT)
+        .eq("current_level", parsedLevel)
+        .order("full_name", { ascending: true });
+        
+      if (studentsError) {
+        console.error("Supabase Error Details:", studentsError);
+        toast.error(studentsError.message);
+        throw studentsError;
       }
-      setIsDataLoading(true);
-      try {
-        const { data: studentsData, error: studentsError } = await supabase
-          .from("students")
-          .select("*")
-          .eq("department", DEPARTMENT)
-          .eq("current_level", parsedLevel)
-          .order("full_name", { ascending: true });
-          
-        if (studentsError) {
-          console.error("Supabase Error Details:", studentsError);
-          toast.error(studentsError.message);
-          throw studentsError;
-        }
 
-        const { data: resultsData, error: resultsError } = await supabase
-          .from("results")
-          .select("*")
-          .eq("course_id", activeCourseId)
-          .eq("academic_year", session);
-          
-        if (resultsError) {
-          console.error("Supabase Error Details:", resultsError);
-          toast.error(resultsError.message);
-          throw resultsError;
-        }
-
-        const merged = (studentsData || []).map((student: Student) => {
-          const match = (resultsData || []).find((r: DbResult) => r.student_id === student.profile_id);
-          
-          // Hydrate with empty default fallback metrics if no result exists in the database
-          return {
-            profile_id: student.profile_id,
-            full_name: student.full_name,
-            reg_number: student.reg_number,
-            ca_score: match?.ca_score ?? 0,
-            exam_score: match?.exam_score ?? 0,
-            total_score: match?.total_score ?? 0,
-            letter_grade: match?.letter_grade ?? "F",
-            grade_point: match?.grade_point ?? 0.0,
-            is_released: match?.is_released ?? false
-          };
-        });
-        setResultsUI(merged);
-      } catch (err: any) {
-        console.error("Data fetch error", err);
-      } finally {
-        setIsDataLoading(false);
+      const { data: resultsData, error: resultsError } = await supabase
+        .from("results")
+        .select("*")
+        .eq("course_id", activeCourseId)
+        .eq("academic_year", session);
+        
+      if (resultsError) {
+        console.error("Supabase Error Details:", resultsError);
+        toast.error(resultsError.message);
+        throw resultsError;
       }
-    };
-    fetchSpreadsheetData();
+
+      const merged = (studentsData || []).map((student: Student) => {
+        const match = (resultsData || []).find((r: DbResult) => r.student_id === student.profile_id);
+        
+        // Hydrate with empty default fallback metrics if no result exists in the database
+        return {
+          profile_id: student.profile_id,
+          full_name: student.full_name,
+          reg_number: student.reg_number,
+          ca_score: match?.ca_score ?? 0,
+          exam_score: match?.exam_score ?? 0,
+          total_score: match?.total_score ?? 0,
+          letter_grade: match?.letter_grade ?? "F",
+          grade_point: match?.grade_point ?? 0.0,
+          is_released: match?.is_released ?? false
+        };
+      });
+      setResultsUI(merged);
+    } catch (err: any) {
+      console.error("Data fetch error", err);
+    } finally {
+      setIsDataLoading(false);
+    }
   }, [activeCourseId, session, parsedLevel, supabase]);
+
+  useEffect(() => {
+    fetchSpreadsheetData();
+  }, [fetchSpreadsheetData]);
 
   const calculateGrade = (ca: number, exam: number) => {
     const total = ca + exam;
@@ -237,6 +238,7 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
       }
       toast.success("Metrics layout saved successfully!");
       setIsEditMode(false);
+      await fetchSpreadsheetData();
     } catch (err: any) {
       console.error("Failed to batch save metrics layout", err);
     } finally {
@@ -318,6 +320,7 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
         toast.success("Results Released Successfully!");
         
         setResultsUI(prev => prev.map(s => ({ ...s, is_released: true })));
+        await fetchSpreadsheetData();
       } catch (err: any) {
         console.error("Release failed", err);
       } finally {
@@ -609,7 +612,7 @@ const StudentRegistryPane = ({ supabase }: { supabase: any }) => {
 const StudentPerformancePane = ({ supabase, userProfileId }: { supabase: any, userProfileId: string }) => {
   const [level, setLevel] = useState<number | string>(500);
   const [semester, setSemester] = useState("Harmattan");
-  const [session, setSession] = useState("2023/2024");
+  const [session, setSession] = useState("2025/2026");
   
   const [results, setResults] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
