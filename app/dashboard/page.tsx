@@ -13,7 +13,7 @@ import { createClient } from "@/utils/supabase";
 import Papa from "papaparse";
 
 // --- TYPES ---
-type Role = "hod" | "lecturer" | "student";
+type Role = "hod" | "lecturer" | "student" | "dean";
 type Pane = "results" | "registry" | "student_view";
 
 interface Course {
@@ -62,6 +62,7 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
   const [courses, setCourses] = useState<Course[]>([]);
   const [activeCourseId, setActiveCourseId] = useState<string>("");
   
+  const [submissionStatus, setSubmissionStatus] = useState("DRAFT");
   const [resultsUI, setResultsUI] = useState<any[]>([]);
   const [isCoursesLoading, setIsCoursesLoading] = useState(true);
   const [isDataLoading, setIsDataLoading] = useState(false);
@@ -143,6 +144,16 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
         toast.error(resultsError.message);
         throw resultsError;
       }
+
+      // Fetch submission state
+      const { data: subData } = await supabase
+        .from("course_submissions")
+        .select("status")
+        .eq("course_id", activeCourseId)
+        .eq("academic_year", session)
+        .single();
+      
+      setSubmissionStatus(subData?.status || "DRAFT");
 
       const merged = (studentsData || []).map((student: Student) => {
         const match = (resultsData || []).find((r: DbResult) => r.student_id === student.profile_id);
@@ -303,26 +314,46 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
     });
   };
 
-  const handleReleaseResults = async () => {
+  const [pendingAction, setPendingAction] = useState("");
+
+  const executeWorkflowAction = async () => {
     if (password === "futoadmin") {
       if (!activeCourseId) return toast.error("No course selected");
       setIsReleasing(true);
       try {
-        const { error } = await supabase.from("results").update({ is_released: true }).eq("course_id", activeCourseId).eq("academic_year", session);
-        if (error) {
-          console.error("Supabase Error Details:", error);
-          toast.error(error.message);
-          throw error;
+        if (pendingAction === "RELEASED") {
+          // Final step: Update results table
+          const { error: rError } = await supabase
+            .from("results")
+            .update({ is_released: true })
+            .eq("course_id", activeCourseId)
+            .eq("academic_year", session);
+          if (rError) throw rError;
         }
         
-        setShowPasswordOverlay(false);
-        confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ["#15803d", "#22c55e", "#ffffff"] });
-        toast.success("Results Released Successfully!");
+        // Update workflow state table
+        const { error: subError } = await supabase
+          .from("course_submissions")
+          .upsert({
+            course_id: activeCourseId,
+            academic_year: session,
+            status: pendingAction
+          }, { onConflict: "course_id,academic_year" });
+          
+        if (subError) throw subError;
         
-        setResultsUI(prev => prev.map(s => ({ ...s, is_released: true })));
+        setShowPasswordOverlay(false);
+        if (pendingAction === "RELEASED") {
+          confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ["#15803d", "#22c55e", "#ffffff"] });
+          toast.success("Results Released to Students!");
+        } else {
+          toast.success(`Workflow advanced to: ${pendingAction.replace(/_/g, " ")}`);
+        }
+        
         await fetchSpreadsheetData();
       } catch (err: any) {
-        console.error("Release failed", err);
+        console.error("Action failed", err);
+        toast.error(err.message);
       } finally {
         setIsReleasing(false);
         setPassword("");
@@ -330,6 +361,11 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
     } else {
       toast.error("Invalid authorization password");
     }
+  };
+
+  const promptAction = (action: string) => {
+    setPendingAction(action);
+    setShowPasswordOverlay(true);
   };
 
   const hasNoData = !isDataLoading && resultsUI.length === 0;
@@ -361,16 +397,25 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
           </select>
         </div>
         
-        {(role === "hod" || role === "lecturer") && (
+        {(role === "hod" || role === "lecturer" || role === "dean") && (
           <div className="flex items-center gap-2 sm:gap-4 mt-2 sm:mt-0">
-            <input type="file" accept=".csv" ref={fileInputRef} onChange={handleCSVUpload} className="hidden" />
-            <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-400 hover:text-gray-700 transition-colors px-2 sm:px-0">
-              <UploadCloud className="w-4 h-4" /> Upload File
-            </button>
-            <button onClick={() => isEditMode ? handleBulkSave() : setIsEditMode(true)} className={`flex items-center gap-2 text-xs sm:text-sm font-bold px-3 sm:px-4 py-2 rounded-lg transition-all ${isEditMode ? "bg-[#105e2e] text-white shadow-md" : "text-gray-400 hover:text-gray-700 hover:bg-gray-50 border border-gray-200 sm:border-transparent"}`}>
-              {isEditMode ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
-              {isEditMode ? "Save Metrics Layout" : "Edit Matrix"}
-            </button>
+            <div className="px-3 py-1 bg-gray-100 rounded-full text-[10px] font-bold text-gray-600 uppercase tracking-wider mr-2">
+              Status: {submissionStatus.replace(/_/g, " ")}
+            </div>
+            
+            {((role === "lecturer" && submissionStatus === "DRAFT") || 
+              (role === "hod" && submissionStatus === "AWAITING_HOD")) && (
+              <>
+                <input type="file" accept=".csv" ref={fileInputRef} onChange={handleCSVUpload} className="hidden" />
+                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-400 hover:text-gray-700 transition-colors px-2 sm:px-0">
+                  <UploadCloud className="w-4 h-4" /> Upload File
+                </button>
+                <button onClick={() => isEditMode ? handleBulkSave() : setIsEditMode(true)} className={`flex items-center gap-2 text-xs sm:text-sm font-bold px-3 sm:px-4 py-2 rounded-lg transition-all ${isEditMode ? "bg-[#105e2e] text-white shadow-md" : "text-gray-400 hover:text-gray-700 hover:bg-gray-50 border border-gray-200 sm:border-transparent"}`}>
+                  {isEditMode ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
+                  {isEditMode ? "Save Metrics Layout" : "Edit Matrix"}
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -432,19 +477,47 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
           <Printer className="w-4 h-4"/> Print Document
         </button>
         
-        {(role === "hod" || role === "lecturer") && (
-          <button 
-            onClick={() => setShowPasswordOverlay(true)} 
-            disabled={hasNoData || !activeCourseId || allReleased} 
-            className={`w-full sm:w-auto flex items-center justify-center gap-2 py-2.5 px-3 sm:px-10 text-white rounded-lg font-bold text-xs sm:text-sm shadow-md transition-all ${
-              allReleased 
-                ? "bg-gray-400 cursor-not-allowed shadow-none" 
-                : "bg-[#105e2e] hover:bg-[#0d4a25] shadow-green-900/20"
-            }`}
-          >
-            <Lock className="w-4 h-4" /> {allReleased ? "RELEASED" : "RELEASE RESULTS"}
-          </button>
-        )}
+        <div className="flex gap-2">
+          {role === "lecturer" && submissionStatus === "DRAFT" && (
+            <button onClick={() => promptAction("AWAITING_HOD")} disabled={hasNoData} className="px-4 py-2 bg-[#105e2e] text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
+              Sign & Submit to HOD
+            </button>
+          )}
+          
+          {role === "hod" && submissionStatus === "AWAITING_HOD" && (
+            <>
+              <button onClick={() => promptAction("DRAFT")} className="px-4 py-2 bg-red-100 text-red-700 rounded-lg font-bold text-xs sm:text-sm">
+                Request Adjustments
+              </button>
+              <button onClick={() => promptAction("AWAITING_DEAN")} className="px-4 py-2 bg-[#105e2e] text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
+                Sign & Forward to Dean
+              </button>
+            </>
+          )}
+          
+          {role === "dean" && submissionStatus === "AWAITING_DEAN" && (
+            <>
+              <button onClick={() => promptAction("AWAITING_HOD")} className="px-4 py-2 bg-red-100 text-red-700 rounded-lg font-bold text-xs sm:text-sm">
+                Return to HOD
+              </button>
+              <button onClick={() => promptAction("APPROVED_BY_DEAN")} className="px-4 py-2 bg-[#105e2e] text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
+                Sign & Approve Result
+              </button>
+            </>
+          )}
+          
+          {role === "hod" && submissionStatus === "APPROVED_BY_DEAN" && (
+            <button onClick={() => promptAction("RELEASED")} className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
+              Release to Students
+            </button>
+          )}
+
+          {submissionStatus === "RELEASED" && (
+             <button disabled className="px-4 py-2 bg-gray-400 text-white rounded-lg font-bold text-xs sm:text-sm cursor-not-allowed shadow-none">
+              <Lock className="w-4 h-4 inline mr-1" /> RELEASED
+            </button>
+          )}
+        </div>
         
         <button onClick={() => toast.success("Exporting CSV...")} className="w-full sm:w-auto flex items-center justify-center gap-2 py-2.5 px-3 sm:px-4 bg-green-50 hover:bg-green-100 rounded-lg text-[#105e2e] font-bold text-xs sm:text-sm tracking-wide uppercase transition-colors">
           <Download className="w-4 h-4"/> Export .xlsx
@@ -459,7 +532,7 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-6 focus:ring-2 focus:ring-[#105e2e] outline-none font-medium" autoFocus placeholder="Password" />
             <div className="flex gap-3">
               <button onClick={() => setShowPasswordOverlay(false)} className="flex-1 py-3 rounded-xl text-gray-500 font-bold hover:bg-gray-50 transition-colors">Cancel</button>
-              <button onClick={handleReleaseResults} disabled={isReleasing} className="flex-1 py-3 bg-[#4f46e5] text-white rounded-xl font-bold shadow-md shadow-indigo-500/20">{isReleasing ? 'Releasing...' : 'Confirm'}</button>
+              <button onClick={executeWorkflowAction} disabled={isReleasing} className="flex-1 py-3 bg-[#105e2e] text-white rounded-xl font-bold shadow-md shadow-green-900/20">{isReleasing ? 'Processing...' : 'Confirm'}</button>
             </div>
           </div>
         </div>
@@ -842,7 +915,7 @@ export default function DashboardShell() {
 
         {/* NAVIGATION LINKS */}
         <div className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
-          {(role === "hod" || role === "lecturer") && (
+          {(role === "hod" || role === "lecturer" || role === "dean") && (
             <>
               <button onClick={() => { setActivePane("results"); setIsMobileMenuOpen(false); }} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all ${activePane === "results" ? "bg-gray-50 text-gray-900 font-bold" : "text-gray-500 font-semibold hover:bg-gray-50/50"}`}>
                 <span className="flex items-center gap-3 text-sm"><BookOpen className="w-4 h-4 opacity-70" /> Results Matrix Canvas</span>
@@ -890,7 +963,7 @@ export default function DashboardShell() {
         
         <div className="flex-1 overflow-hidden relative">
           {activePane === "results" && <StaffResultsPane supabase={supabase} role={role} />}
-          {activePane === "registry" && (role === "hod" || role === "lecturer") && <StudentRegistryPane supabase={supabase} />}
+          {activePane === "registry" && (role === "hod" || role === "lecturer" || role === "dean") && <StudentRegistryPane supabase={supabase} />}
           {activePane === "student_view" && role === "student" && <StudentPerformancePane supabase={supabase} userProfileId={userProfileId} />}
         </div>
       </div>

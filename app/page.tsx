@@ -2,11 +2,11 @@
 
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Lock, Mail, Shield, BookOpen, UserCheck, GraduationCap, Building2 } from "lucide-react";
+import { Lock, Mail, Shield, BookOpen, UserCheck, GraduationCap, Building2, Landmark } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 import { createClient } from "@/utils/supabase";
 
-type Role = "HOD" | "Lecturer" | "Student";
+type Role = "HOD" | "Lecturer" | "Student" | "Dean";
 
 export default function LoginPortal() {
   const router = useRouter();
@@ -25,7 +25,8 @@ export default function LoginPortal() {
 
     // Pre-fill email based on role selection for demonstration
     if (role === "Student") setEmail("20201234567@futo.ng");
-    else if (role === "HOD") setEmail("dean@futo.ng");
+    else if (role === "Dean") setEmail("dean@futo.ng");
+    else if (role === "HOD") setEmail("hod@futo.ng");
     else setEmail("staff@futo.ng");
   }, [role, supabase]);
 
@@ -135,6 +136,15 @@ export default function LoginPortal() {
           <div className="mb-8">
             <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Access Category</label>
             <div className="flex bg-gray-50/80 p-1.5 rounded-xl border border-gray-100 shadow-inner">
+              <button
+                type="button"
+                onClick={() => setRole("Dean")}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-bold rounded-lg transition-all ${
+                  role === "Dean" ? "bg-white text-[#105e2e] shadow border border-gray-200" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100/50"
+                }`}
+              >
+                <Landmark className="w-4 h-4" /> Dean
+              </button>
               <button
                 type="button"
                 onClick={() => setRole("HOD")}
