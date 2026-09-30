@@ -68,7 +68,7 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
   const [isDataLoading, setIsDataLoading] = useState(false);
   
   const [showPasswordOverlay, setShowPasswordOverlay] = useState(false);
-  const [password, setPassword] = useState("");
+  const [confirmText, setConfirmText] = useState("");
   const [isReleasing, setIsReleasing] = useState(false);
   
   const [isEditMode, setIsEditMode] = useState(false);
@@ -317,7 +317,7 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
   const [pendingAction, setPendingAction] = useState("");
 
   const executeWorkflowAction = async () => {
-    if (password === "futoadmin") {
+    if (confirmText.toLowerCase() === "confirm") {
       if (!activeCourseId) return toast.error("No course selected");
       setIsReleasing(true);
       try {
@@ -356,10 +356,10 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
         toast.error(err.message);
       } finally {
         setIsReleasing(false);
-        setPassword("");
+        setConfirmText("");
       }
     } else {
-      toast.error("Invalid authorization password");
+      toast.error("Type 'confirm' correctly to proceed");
     }
   };
 
@@ -370,6 +370,9 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
 
   const hasNoData = !isDataLoading && resultsUI.length === 0;
   const allReleased = resultsUI.length > 0 && resultsUI.every(r => r.is_released);
+  const canEdit = (role === "lecturer" && submissionStatus === "DRAFT") || 
+                  (role === "hod" && submissionStatus === "AWAITING_HOD") || 
+                  (role === "dean" && submissionStatus === "AWAITING_DEAN");
 
   return (
     <div className="h-full flex flex-col bg-white text-gray-900">
@@ -403,19 +406,16 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
               Status: {submissionStatus.replace(/_/g, " ")}
             </div>
             
-            {((role === "lecturer" && submissionStatus === "DRAFT") || 
-              (role === "hod" && submissionStatus === "AWAITING_HOD")) && (
-              <>
-                <input type="file" accept=".csv" ref={fileInputRef} onChange={handleCSVUpload} className="hidden" />
-                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-400 hover:text-gray-700 transition-colors px-2 sm:px-0">
-                  <UploadCloud className="w-4 h-4" /> Upload File
-                </button>
-                <button onClick={() => isEditMode ? handleBulkSave() : setIsEditMode(true)} className={`flex items-center gap-2 text-xs sm:text-sm font-bold px-3 sm:px-4 py-2 rounded-lg transition-all ${isEditMode ? "bg-[#105e2e] text-white shadow-md" : "text-gray-400 hover:text-gray-700 hover:bg-gray-50 border border-gray-200 sm:border-transparent"}`}>
-                  {isEditMode ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
-                  {isEditMode ? "Save Metrics Layout" : "Edit Matrix"}
-                </button>
-              </>
-            )}
+            <div className="flex items-center gap-2 sm:gap-4 mt-2 sm:mt-0">
+              <input type="file" accept=".csv" ref={fileInputRef} onChange={handleCSVUpload} className="hidden" disabled={!canEdit} />
+              <button disabled={!canEdit} onClick={() => fileInputRef.current?.click()} className={`flex items-center gap-2 text-xs sm:text-sm font-bold transition-colors px-2 sm:px-0 ${!canEdit ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-gray-700'}`}>
+                <UploadCloud className="w-4 h-4" /> Upload File
+              </button>
+              <button disabled={!canEdit} onClick={() => isEditMode ? handleBulkSave() : setIsEditMode(true)} className={`flex items-center gap-2 text-xs sm:text-sm font-bold px-3 sm:px-4 py-2 rounded-lg transition-all ${!canEdit ? 'bg-gray-100 text-gray-300 cursor-not-allowed border border-gray-100' : (isEditMode ? 'bg-[#105e2e] text-white shadow-md' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-50 border border-gray-200 sm:border-transparent')}`}>
+                {isEditMode ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
+                {isEditMode ? "Save Metrics Layout" : "Edit Matrix"}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -477,19 +477,19 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
           <Printer className="w-4 h-4"/> Print Document
         </button>
         
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-2">
           {role === "lecturer" && submissionStatus === "DRAFT" && (
-            <button onClick={() => promptAction("AWAITING_HOD")} disabled={hasNoData} className="px-4 py-2 bg-[#105e2e] text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
+            <button onClick={() => promptAction("AWAITING_HOD")} disabled={hasNoData} className="w-full sm:w-auto px-4 py-2 bg-[#105e2e] text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
               Sign & Submit to HOD
             </button>
           )}
           
           {role === "hod" && submissionStatus === "AWAITING_HOD" && (
             <>
-              <button onClick={() => promptAction("DRAFT")} className="px-4 py-2 bg-red-100 text-red-700 rounded-lg font-bold text-xs sm:text-sm">
+              <button onClick={() => promptAction("DRAFT")} className="w-full sm:w-auto px-4 py-2 bg-red-100 text-red-700 rounded-lg font-bold text-xs sm:text-sm">
                 Request Adjustments
               </button>
-              <button onClick={() => promptAction("AWAITING_DEAN")} className="px-4 py-2 bg-[#105e2e] text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
+              <button onClick={() => promptAction("AWAITING_DEAN")} className="w-full sm:w-auto px-4 py-2 bg-[#105e2e] text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
                 Sign & Forward to Dean
               </button>
             </>
@@ -497,23 +497,23 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
           
           {role === "dean" && submissionStatus === "AWAITING_DEAN" && (
             <>
-              <button onClick={() => promptAction("AWAITING_HOD")} className="px-4 py-2 bg-red-100 text-red-700 rounded-lg font-bold text-xs sm:text-sm">
+              <button onClick={() => promptAction("AWAITING_HOD")} className="w-full sm:w-auto px-4 py-2 bg-red-100 text-red-700 rounded-lg font-bold text-xs sm:text-sm">
                 Return to HOD
               </button>
-              <button onClick={() => promptAction("APPROVED_BY_DEAN")} className="px-4 py-2 bg-[#105e2e] text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
+              <button onClick={() => promptAction("APPROVED_BY_DEAN")} className="w-full sm:w-auto px-4 py-2 bg-[#105e2e] text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
                 Sign & Approve Result
               </button>
             </>
           )}
           
           {role === "hod" && submissionStatus === "APPROVED_BY_DEAN" && (
-            <button onClick={() => promptAction("RELEASED")} className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
+            <button onClick={() => promptAction("RELEASED")} className="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold text-xs sm:text-sm shadow-md">
               Release to Students
             </button>
           )}
 
           {submissionStatus === "RELEASED" && (
-             <button disabled className="px-4 py-2 bg-gray-400 text-white rounded-lg font-bold text-xs sm:text-sm cursor-not-allowed shadow-none">
+             <button disabled className="w-full sm:w-auto px-4 py-2 bg-gray-400 text-white rounded-lg font-bold text-xs sm:text-sm cursor-not-allowed shadow-none">
               <Lock className="w-4 h-4 inline mr-1" /> RELEASED
             </button>
           )}
@@ -527,9 +527,9 @@ const StaffResultsPane = ({ supabase, role }: { supabase: any, role: Role }) => 
       {showPasswordOverlay && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl border border-gray-100">
-            <h3 className="text-xl font-extrabold text-gray-900 mb-2">Confirm Release</h3>
-            <p className="text-sm text-gray-500 mb-6 font-medium">Enter 'futoadmin' to securely release grades to the portal.</p>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-6 focus:ring-2 focus:ring-[#105e2e] outline-none font-medium" autoFocus placeholder="Password" />
+            <h3 className="text-xl font-extrabold text-gray-900 mb-2">Confirm Action</h3>
+            <p className="text-sm text-gray-500 mb-6 font-medium">Type <strong>'confirm'</strong> to securely authorize and proceed with this step.</p>
+            <input type="text" value={confirmText} onChange={e => setConfirmText(e.target.value)} className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-6 focus:ring-2 focus:ring-[#105e2e] outline-none font-medium" autoFocus placeholder="Type confirm" />
             <div className="flex gap-3">
               <button onClick={() => setShowPasswordOverlay(false)} className="flex-1 py-3 rounded-xl text-gray-500 font-bold hover:bg-gray-50 transition-colors">Cancel</button>
               <button onClick={executeWorkflowAction} disabled={isReleasing} className="flex-1 py-3 bg-[#105e2e] text-white rounded-xl font-bold shadow-md shadow-green-900/20">{isReleasing ? 'Processing...' : 'Confirm'}</button>
