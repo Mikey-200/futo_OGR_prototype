@@ -20,7 +20,7 @@ Here is the exact journey of a result from start to finish:
 ### Step 1: The Lecturer (Course Coordinator)
 * **Status in Database:** `DRAFT`
 * **What happens:** The Lecturer logs in, uploads the CSV file of grades, and checks for any errors. At this stage, they are the only ones who can edit the numbers. 
-* **Action:** Once satisfied, they click **"Sign & Submit to HOD"**. The status changes to `AWAITING_HOD`.
+* **Action:** Once satisfied, they click **"Sign & Submit to HOD"**. A security overlay will ask them to type **"confirm"** to execute the handover. The status changes to `AWAITING_HOD`.
 
 ### Step 2: The HOD & Secretary
 * **Status in Database:** `AWAITING_HOD`
@@ -52,7 +52,9 @@ When the HOD clicks "Release to Students":
 
 ---
 
-## 📝 Quick Rule of Thumb for Editing
-- **Lecturers** can ONLY upload or edit CSV files when the status is `DRAFT`.
-- **HODs** can ONLY edit if they send it back to themselves or while reviewing in `AWAITING_HOD`.
-- **Deans** have "Read-Only" viewing rights to ensure data is not accidentally altered at the top level.
+## 📝 Quick Rule of Thumb for Editing & Security
+- **Always Visible, Strictly Disabled:** The "Edit Matrix" and "Upload File" tools remain permanently visible on all staff dashboards so users know they exist. However, they are completely greyed out and unclickable unless it is actively your turn in the hierarchy.
+- **Lecturers** can ONLY unlock the edit buttons when the status is `DRAFT`.
+- **HODs** can ONLY unlock the edit buttons when reviewing in `AWAITING_HOD`.
+- **Deans** can ONLY unlock the edit buttons when vetting in `AWAITING_DEAN`.
+- **The "Confirm" Challenge:** Whenever any staff member attempts to forward, approve, or reject a document to the next level, the system deploys a secure overlay demanding the user manually type **"confirm"** before the workflow advances.
